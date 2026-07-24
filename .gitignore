@@ -1,0 +1,13 @@
+bin/
+obj/
+*.user
+.vs/
+.vscode/*
+!.vscode/extensions.json
+
+# Flutter / Dart
+**/build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages

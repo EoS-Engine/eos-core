@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\EOS.Contracts\EOS.Contracts.csproj" />
+    <ProjectReference Include="..\EOS.Knowledge\EOS.Knowledge.csproj" />
+    <ProjectReference Include="..\EOS.SDK\EOS.SDK.csproj" />
+  </ItemGroup>
+
+</Project>

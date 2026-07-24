@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\EOS.KnowledgeGraph\EOS.KnowledgeGraph.csproj" />
+    <ProjectReference Include="..\EOS.VectorStore\EOS.VectorStore.csproj" />
+  </ItemGroup>
+
+</Project>

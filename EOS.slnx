@@ -1,0 +1,39 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EOS.AIArchitect/EOS.AIArchitect.csproj" />
+    <Project Path="src/EOS.AIProvider/EOS.AIProvider.csproj" />
+    <Project Path="src/EOS.Application/EOS.Application.csproj" />
+    <Project Path="src/EOS.BusinessAnalyst/EOS.BusinessAnalyst.csproj" />
+    <Project Path="src/EOS.Contracts/EOS.Contracts.csproj" />
+    <Project Path="src/EOS.Core/EOS.Core.csproj" />
+    <Project Path="src/EOS.CTO/EOS.CTO.csproj" />
+    <Project Path="src/EOS.Dashboard/EOS.Dashboard.csproj" />
+    <Project Path="src/EOS.DevOps/EOS.DevOps.csproj" />
+    <Project Path="src/EOS.Domain/EOS.Domain.csproj" />
+    <Project Path="src/EOS.Gates/EOS.Gates.csproj" />
+    <Project Path="src/EOS.Infrastructure/EOS.Infrastructure.csproj" />
+    <Project Path="src/EOS.Knowledge/EOS.Knowledge.csproj" />
+    <Project Path="src/EOS.KnowledgeGraph/EOS.KnowledgeGraph.csproj" />
+    <Project Path="src/EOS.Learning/EOS.Learning.csproj" />
+    <Project Path="src/EOS.MobileArchitect/EOS.MobileArchitect.csproj" />
+    <Project Path="src/EOS.Orchestrator/EOS.Orchestrator.csproj" />
+    <Project Path="src/EOS.Pipeline/EOS.Pipeline.csproj" />
+    <Project Path="src/EOS.Planner/EOS.Planner.csproj" />
+    <Project Path="src/EOS.PrincipalEngineer/EOS.PrincipalEngineer.csproj" />
+    <Project Path="src/EOS.ProductOwner/EOS.ProductOwner.csproj" />
+    <Project Path="src/EOS.QA/EOS.QA.csproj" />
+    <Project Path="src/EOS.Reasoning/EOS.Reasoning.csproj" />
+    <Project Path="src/EOS.Resources/EOS.Resources.csproj" />
+    <Project Path="src/EOS.Runner/EOS.Runner.csproj" />
+    <Project Path="src/EOS.SDK/EOS.SDK.csproj" />
+    <Project Path="src/EOS.SeniorEngineer/EOS.SeniorEngineer.csproj" />
+    <Project Path="src/EOS.SharedKernel/EOS.SharedKernel.csproj" />
+    <Project Path="src/EOS.TechLead/EOS.TechLead.csproj" />
+    <Project Path="src/EOS.Tools/EOS.Tools.csproj" />
+    <Project Path="src/EOS.VectorStore/EOS.VectorStore.csproj" />
+    <Project Path="src/EOS.Web/EOS.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EOS.ArchitectureTests/EOS.ArchitectureTests.csproj" />
+  </Folder>
+</Solution>
