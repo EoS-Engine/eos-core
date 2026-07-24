@@ -57,10 +57,10 @@ Bootstrap sequence completes reliably three consecutive times from a clean envir
 | Architecture documents | `EOS-Specification.md` |
 | Related sections | Part 1 (Physical Repository Architecture), Part 2 (Module Dependency Rules) |
 | Prerequisites | None — this is the first Work Package. |
-| Included components | All 29 projects from Part 1 §1.1 scaffolded as empty/near-empty compiling projects (including the four new projects `EOS.Learning`, `EOS.Reasoning`, `EOS.AIProvider`, `EOS.Resources` per the already-approved specifications' project introductions); base value objects and entity primitives in `EOS.SharedKernel`; interface *shapes* (no logic) for every Part 2-referenced contract boundary in `EOS.Contracts`. |
+| Included components | All 33 projects from Part 1 §1.1 scaffolded as empty/near-empty compiling projects (including `EOS.Learning`, `EOS.Reasoning`, `EOS.AIProvider`, `EOS.Resources`, now registered in Part 1 per the consolidated registration); base value objects and entity primitives in `EOS.SharedKernel`; interface *shapes* (no logic) for every Part 2-referenced contract boundary in `EOS.Contracts`. |
 | Explicitly excluded | Any business logic; any role project's actual behavior; any data store connection (WP-004); any event publishing mechanism (WP-003). |
 | Expected deliverables | A solution that builds clean with `dotnet build`; Architecture Fitness Rule R-00 (no circular references) passes via a build-graph check. |
-| Projects affected | All 29 Part 1 projects (scaffold only) |
+| Projects affected | All 33 Part 1 projects (scaffold only) |
 | Estimated implementation effort | 3–4 days |
 | Estimated code size | ~900 lines (mostly project files, base types, empty interfaces) |
 | Build verification | `dotnet build EOS.sln` — zero errors, zero warnings |
@@ -912,7 +912,7 @@ Every item below maps to exactly one Work Package. Items marked **(gap)** are ex
 
 | Item | Type | Mapped WP |
 |---|---|---|
-| Physical Repository Architecture (all 29 projects) | Components | WP-001 |
+| Physical Repository Architecture (all 33 projects) | Components | WP-001 |
 | Module Dependency Rules / Fitness Rules R-00–R-09 | Governance | WP-001 (structural), spot-checked throughout |
 | Event Catalog envelope & versioning | Infrastructure | WP-003 |
 | All Constitution-Part-3 events (`TaskCreated`...`ReleaseApproved`) | Events | WP-024/WP-025 (Task events), WP-012 (`ReleaseApproved` consumption) |

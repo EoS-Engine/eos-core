@@ -665,7 +665,7 @@ Target hardware: Ubuntu, Intel i7-1065G7, 32GB RAM, offline, local execution onl
 
 ## Open Questions
 
-1. `EOS.Gates`'s Part 1 description update (ADR-P001) — recommend an Architecture Evolution (Constitution §0.10) documentation-only ADR, not a new project registration.
+1. `EOS.Gates`'s Part 1 description update (ADR-P001) — recommend an Architecture Evolution (Constitution §0.10) documentation-only ADR, not a new project registration. **Resolved:** description updated in `EOS-Specification.md` Part 1 §1.1 to reference Protection Layer, per EOS-System-Architecture-Specification-v1.0 ADR-SYS001, during the pre-implementation documentation synchronization pass.
 2. GPU resource protection (§16, §32) — deferred until the hardware target changes.
 3. Working Memory poisoning-vector question (§6) — deferred pending real usage data, joint revisit with Memory Management.
 4. Whether Approval Accuracy (§30) sampling methodology needs its own dedicated specification once real approval volume exists — flagged, not designed here.

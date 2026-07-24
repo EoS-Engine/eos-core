@@ -601,7 +601,7 @@ Target hardware: Ubuntu, Intel i7-1065G7, 32GB RAM, local execution only (unchan
 
 ## Open Questions
 
-1. `EOS.Reasoning`'s formal registration in Constitution Part 1 — pending a future Architecture Evolution ADR (mirrors `EOS.Learning`'s still-open equivalent question).
+1. `EOS.Reasoning`'s formal registration in Constitution Part 1 — pending a future Architecture Evolution ADR (mirrors `EOS.Learning`'s still-open equivalent question). **Resolved:** registered via EOS-System-Architecture-Specification-v1.0 ADR-SYS001, executed in `EOS-Specification.md` Part 1 §1.1/§1.2 during the pre-implementation documentation synchronization pass.
 2. Exact mechanics of Protection Layer's gating of `DecisionMade` (§15.4, ADR-R003) — pending the Protection Layer Specification.
 3. `IAIProviderClient`'s full shape (§16.2, §15.6) — pending the AI Provider Layer Specification.
 4. Whether Decision Reuse (§25, §27) should eventually become an actual caching mechanism, and if so, how it would be reconciled with FR-R7's reproducibility requirement — flagged, not decided.

@@ -113,16 +113,16 @@ The genuine bidirectional pair (Reasoning↔Knowledge) does not create a circula
 
 | Logical Subsystem (this lineage) | Physical Project(s) (Constitution Part 1) | Registration Status |
 |---|---|---|
-| Learning Engine | `EOS.Learning` | New — pending Part 1 registration (Learning-Engine-Specification-v1.1 Open Question 1) |
+| Learning Engine | `EOS.Learning` | Registered (Constitution Part 1 §1.1/§1.2, per ADR-SYS001) |
 | Memory Management | `EOS.Knowledge`, `EOS.KnowledgeGraph`, `EOS.VectorStore` | Existing, unchanged |
-| Reasoning Engine | `EOS.Reasoning` | New — pending Part 1 registration (Reasoning-Engine-Specification-v1.0 Open Question 1) |
-| Protection Layer | `EOS.Gates` | Existing, scope-description update recommended (Protection-Layer-Specification-v1.0 ADR-P001) |
-| Planning & Execution Engine | `EOS.Planner`, `EOS.Orchestrator` (Scheduler subsystem) | Existing, scope-description update recommended (Planning-Execution-Engine-Specification-v1.0 ADR-PE001) |
+| Reasoning Engine | `EOS.Reasoning` | Registered (Constitution Part 1 §1.1/§1.2, per ADR-SYS001) |
+| Protection Layer | `EOS.Gates` | Existing, scope description updated to reference Protection Layer (Constitution Part 1 §1.1, per ADR-P001/ADR-SYS001) |
+| Planning & Execution Engine | `EOS.Planner`, `EOS.Orchestrator` (Scheduler subsystem) | Existing, scope description updated to reference Planning & Execution Engine (Constitution Part 1 §1.1, per ADR-PE001/ADR-SYS001) |
 | Knowledge Management | `EOS.Knowledge` (same project as Memory Management — complementary concern, not a sibling project) | Existing, unchanged (Knowledge-Management-Specification-v1.0 ADR-KM001) |
-| AI Provider Layer | `EOS.AIProvider` | New — pending Part 1 registration (AI-Provider-Layer-Specification-v1.0 Open Question 1) |
-| Resource Management | `EOS.Resources` | New — pending Part 1 registration (Resource-Management-Specification-v1.0 Open Question 1) |
+| AI Provider Layer | `EOS.AIProvider` | Registered (Constitution Part 1 §1.1/§1.2, per ADR-SYS001) |
+| Resource Management | `EOS.Resources` | Registered (Constitution Part 1 §1.1/§1.2, per ADR-SYS001) |
 
-**Consolidated registration recommendation (§25, ADR-SYS001):** the four new-project registrations and the two scope-description updates above should be handled as a single, consolidated Architecture Evolution ADR (Constitution §0.10) rather than six separate changes — every one of the four new-project specifications already independently recommended bundling with its siblings; this document is where that bundling is finally proposed concretely.
+**Consolidated registration executed (§25, ADR-SYS001):** the four new-project registrations and the two scope-description updates above were closed as a single, consolidated Architecture Evolution ADR (Constitution §0.10) rather than six separate changes, per this document's own recommendation and every one of the four new-project specifications' independent bundling recommendation. See Constitution Part 1 §1.1/§1.2 and §1.4 for the resulting state, and this document's ADR-SYS001 status below.
 ## 7. Subsystem Overview
 
 Each subsystem below is summarized, not redefined — every claim cites the approved document that is the actual source of truth.
@@ -803,7 +803,7 @@ Protection Layer's Emergency Shutdown (Protection-Layer-Specification-v1.0 §26.
 
 **Title:** Consolidated Project Registration for All Four Pending New Projects
 
-**Status:** Proposed
+**Status:** Accepted — executed in `EOS-Specification.md` Part 1 §1.1/§1.2/§1.4 during the pre-implementation documentation synchronization pass
 
 **Context:** Four approved documents (`Learning-Engine-Specification-v1.1`, `Reasoning-Engine-Specification-v1.0`, `AI-Provider-Layer-Specification-v1.0`, `Resource-Management-Specification-v1.0`) each independently introduced a new project (`EOS.Learning`, `EOS.Reasoning`, `EOS.AIProvider`, `EOS.Resources`) and each independently flagged its own Constitution Part 1 registration as an Open Question, with the later three explicitly recommending bundling with their predecessors. Two further approved documents (`Protection-Layer-Specification-v1.0`, `Planning-Execution-Engine-Specification-v1.0`) recommended a scope-description-only update to existing Part 1 entries (`EOS.Gates`, `EOS.Planner`/`EOS.Orchestrator`).
 

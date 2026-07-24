@@ -658,7 +658,7 @@ Target hardware: Ubuntu, Intel i7-1065G7, 32GB RAM, single machine, offline-firs
 
 ## Open Questions
 
-1. `EOS.Resources`'s Part 1 registration (ADR-RM001-adjacent) — pending a future Architecture Evolution ADR, recommended to be bundled with the three other still-open project registrations in this lineage.
+1. `EOS.Resources`'s Part 1 registration (ADR-RM001-adjacent) — pending a future Architecture Evolution ADR, recommended to be bundled with the three other still-open project registrations in this lineage. **Resolved:** registered via EOS-System-Architecture-Specification-v1.0 ADR-SYS001, executed in `EOS-Specification.md` Part 1 §1.1/§1.2 during the pre-implementation documentation synchronization pass.
 2. Whether Model Residency Management's unload decisions (§14.2) should eventually consult AI Provider Layer's own per-provider Health signal (AI-Provider-Layer-Specification-v1.0 §17) before evicting, to avoid unloading a model whose provider is already under health-related strain — flagged, not designed here, to avoid prematurely coupling two independently-owned health concepts.
 3. Whether Starvation Prevention's (§19.4) "consecutive Sprint cycles" threshold should itself be resource-type-specific rather than uniform — flagged, not decided.
 

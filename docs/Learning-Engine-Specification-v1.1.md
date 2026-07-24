@@ -796,7 +796,7 @@ Carried forward from v1.0 (unresolved), plus new ones raised by this revision:
 
 ## Remaining Gaps
 
-- `EOS.Learning` still not formally registered in Constitution Part 1 (Open Question 1).
+- `EOS.Learning` still not formally registered in Constitution Part 1 (Open Question 1). **Resolved:** registered via EOS-System-Architecture-Specification-v1.0 ADR-SYS001, executed in `EOS-Specification.md` Part 1 §1.1/§1.2 during the pre-implementation documentation synchronization pass.
 - `IReasoningEngineClient` interface (now two methods) awaits ratification by the Reasoning Engine Specification (Open Question 2).
 - Long-term ownership of two residual threat-model risks is undecided pending a possible future Protection Layer Specification (Open Question 5).
 

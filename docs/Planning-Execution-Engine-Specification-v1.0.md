@@ -715,7 +715,7 @@ Target hardware: Ubuntu, Intel i7-1065G7, 32GB RAM, single local machine, offlin
 
 ## Open Questions
 
-1. `EOS.Planner`/`EOS.Orchestrator`'s Part 1 description update (ADR-PE001) — pending a future Architecture Evolution ADR, potentially bundled with Protection's identical open item.
+1. `EOS.Planner`/`EOS.Orchestrator`'s Part 1 description update (ADR-PE001) — pending a future Architecture Evolution ADR, potentially bundled with Protection's identical open item. **Resolved:** `EOS.Planner`'s description updated in `EOS-Specification.md` Part 1 §1.1 to reference Planning & Execution Engine, per EOS-System-Architecture-Specification-v1.0 ADR-SYS001, during the pre-implementation documentation synchronization pass.
 2. Goal-level cycle detection's exact algorithmic relationship to Constitution Part 2 §2.4's existing project-dependency cycle prevention — flagged in §29, not fully designed here to avoid duplicating that mechanism prematurely.
 3. Whether a rising Reasoning Engine delegation frequency (§29) should trigger an automatic architectural review, or remain a human-observed KPI trend only — flagged, not decided.
 

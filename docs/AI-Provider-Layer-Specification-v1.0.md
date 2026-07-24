@@ -654,7 +654,7 @@ Target hardware: Ubuntu, Intel i7-1065G7, 32GB RAM, offline-first, local executi
 | Routing Confidence (§15.2) miscalibration causes the Router to systematically prefer an unreliable-but-fast provider over a reliable-but-slower one | Medium | Medium | Routing Accuracy KPI (§27) surfaces this trend; `Providers.json`/`Thresholds.json` weighting is externally tunable without a code change |
 | The two-exclusive-channel design (ADR-AI002) becomes awkward if a genuinely new capability doesn't cleanly fit either `infer()` or `embed()` | Low | Medium | Flagged as Open Question 3 (§29) rather than forced into an ill-fitting channel now |
 | Health Monitor's Failure Detection (§17.3) threshold is miscalibrated, causing excessive Failover churn between providers | Medium | Medium | Mirrors the exact "approval fatigue"-style concern every prior specification in this lineage has flagged for its own thresholds (e.g., Protection-Layer-Specification-v1.0 §24.7); recalibrated each Quarterly cycle (Constitution §0.12.1) via `Thresholds.json` |
-| `EOS.AIProvider`'s Part 1 registration remains, like `EOS.Learning`/`EOS.Reasoning`, an open item (§29) — three unregistered new projects now accumulate across this lineage | Low | Low-Medium | Flagged explicitly (§29) rather than allowed to silently accumulate; recommended for a single, consolidated future Architecture Evolution ADR covering all three registrations together |
+| `EOS.AIProvider`'s Part 1 registration remains, like `EOS.Learning`/`EOS.Reasoning`, an open item (§29) — three unregistered new projects now accumulate across this lineage | Low | Low-Medium | **Resolved:** all four (including `EOS.Resources`) registered together via EOS-System-Architecture-Specification-v1.0 ADR-SYS001, per its own consolidated-registration recommendation, executed in `EOS-Specification.md` Part 1 §1.1/§1.2 during the pre-implementation documentation synchronization pass |
 
 ## 29. Future Evolution
 
@@ -665,7 +665,7 @@ Target hardware: Ubuntu, Intel i7-1065G7, 32GB RAM, offline-first, local executi
 
 ## Open Questions
 
-1. `EOS.AIProvider`'s Part 1 registration (ADR-AI001) — pending a future Architecture Evolution ADR, recommended to be bundled with `EOS.Learning`'s and `EOS.Reasoning`'s identical open items.
+1. `EOS.AIProvider`'s Part 1 registration (ADR-AI001) — pending a future Architecture Evolution ADR, recommended to be bundled with `EOS.Learning`'s and `EOS.Reasoning`'s identical open items. **Resolved:** registered via EOS-System-Architecture-Specification-v1.0 ADR-SYS001, executed in `EOS-Specification.md` Part 1 §1.1/§1.2 during the pre-implementation documentation synchronization pass.
 2. Whether Hot Reload (§18.4) should extend to `Providers.json` in a future version, and how that interacts with Constitution Part 10 §10.2's existing hot-reload scope — flagged, not decided.
 3. Whether a genuinely new AI capability that doesn't fit `infer()`/`embed()` should extend an existing channel or warrant a third (ADR-AI002) — flagged, not decided, pending a concrete future need.
 4. Whether Routing Accuracy's (§27) "idealized policy-following router" comparison baseline needs its own dedicated sampling methodology once real routing volume exists — flagged, not designed here.

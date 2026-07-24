@@ -428,7 +428,11 @@ EOS.sln
 │   ├── EOS.Application/           Use cases / application services orchestrating Domain
 │   ├── EOS.Infrastructure/        Persistence, messaging, external integrations
 │   ├── EOS.Orchestrator/          Coordinates roles, cycles, and event routing
-│   ├── EOS.Planner/               Capability Planner implementation (§0.4)
+│   ├── EOS.Planner/               Capability Planner (§0.4) + Planning & Execution Engine (Planning-Execution-Engine-Specification-v1.0)
+│   ├── EOS.Learning/               Learning Engine: Meta Learning pipeline, ROI Gate, Quarantine, Fitness Functions (Learning-Engine-Specification-v1.1)
+│   ├── EOS.Reasoning/              Reasoning Engine: 12-stage decision/explanation pipeline (Reasoning-Engine-Specification-v1.0)
+│   ├── EOS.AIProvider/             AI Provider Layer: inference/embedding abstraction, provider routing (AI-Provider-Layer-Specification-v1.0)
+│   ├── EOS.Resources/              Resource Management: capacity measurement, quotas, model residency (Resource-Management-Specification-v1.0)
 │   ├── EOS.CTO/                   CTO autonomous role
 │   ├── EOS.PrincipalEngineer/     Principal Engineer autonomous role
 │   ├── EOS.TechLead/              Tech Lead autonomous role
@@ -442,8 +446,8 @@ EOS.sln
 │   ├── EOS.Knowledge/             Knowledge Graph query/query-planning API
 │   ├── EOS.KnowledgeGraph/        Graph storage + traversal engine
 │   ├── EOS.VectorStore/           Embedding storage + similarity search (ChromaDB-backed)
-│   ├── EOS.Gates/                 Quality Gates engine (§0.8) + Fitness Rules (Part 2)
-│   ├── EOS.Pipeline/              CI/CD pipeline definitions and execution
+│   ├── EOS.Gates/                 Quality Gates engine (§0.8) + Fitness Rules (Part 2) + Protection Layer (Protection-Layer-Specification-v1.0)
+│   ├── EOS.Pipeline/              CI/CD pipeline definitions and execution — Deferred (Post-v1); registered project skeleton only, no specification (see §1.4)
 │   ├── EOS.SDK/                   Public reusable SDK (Part 11)
 │   ├── EOS.Dashboard/             Dashboard aggregation/query layer (read-only, §0.11)
 │   ├── EOS.Web/                   Web front-end (Blazor/React host — presentation only)
@@ -453,6 +457,7 @@ EOS.sln
 ├── tests/                         Mirrors src/ 1:1, plus tests/EOS.ArchitectureTests
 ├── benchmarks/                    BenchmarkDotNet + Flutter integration_test perf suites
 ├── docs/                          Generated + hand-authored docs, ADRs, this specification
+├── config/                        The ten Part 10 configuration files (§10.3 ownership/storage)
 ├── scripts/                       Bootstrap, restore-drill, migration scripts (Part 12/13)
 ├── deploy/                        IaC (Bicep/Terraform), Helm charts, store deployment configs
 └── prompts/                       Prompt Registry source-of-truth (Part 9), versioned per role
@@ -470,6 +475,10 @@ EOS.sln
 | EOS.Infrastructure | DevOps | EOS.Application, EOS.Contracts | EOS.CTO..EOS.MobileArchitect (role projects) |
 | EOS.Orchestrator | Principal Engineer | EOS.Contracts, EOS.Application | Role internals directly (role projects only via contracts) |
 | EOS.Planner | Product Owner (policy), Principal Engineer (impl) | EOS.Contracts, EOS.Knowledge | Role projects directly |
+| EOS.Learning | Principal Engineer | EOS.Contracts, EOS.Knowledge, EOS.SDK | Role projects (no role project depends on it directly) |
+| EOS.Reasoning | Principal Engineer | EOS.Contracts, EOS.SDK | Everything except EOS.AIProvider (sole `IAIProviderClient` consumer) |
+| EOS.AIProvider | AI Architect (policy), Principal Engineer (impl) | EOS.Contracts, EOS.SDK | A third consumer channel beyond EOS.Reasoning (`infer`) and EOS.Knowledge (`embed`) |
+| EOS.Resources | Principal Engineer | EOS.Contracts, EOS.SDK | Dispatch, gating, or selection logic (measurement/publication only) |
 | EOS.CTO | CTO | EOS.Contracts, EOS.Knowledge | Nothing may depend on it except Orchestrator (routing) |
 | EOS.PrincipalEngineer | Principal Engineer | EOS.Contracts, EOS.Gates, EOS.Knowledge | — |
 | EOS.TechLead | Tech Lead | EOS.Contracts, EOS.Planner (read) | EOS.CTO |
@@ -484,7 +493,7 @@ EOS.sln
 | EOS.KnowledgeGraph | Principal Engineer | EOS.Infrastructure (storage) | EOS.Dashboard, EOS.Web directly |
 | EOS.VectorStore | Principal Engineer | EOS.Infrastructure | — |
 | EOS.Gates | QA / Principal Engineer | EOS.Contracts, EOS.Domain (read) | EOS.Web, EOS.Mobile |
-| EOS.Pipeline | DevOps | EOS.Gates, EOS.Contracts | — |
+| EOS.Pipeline | DevOps | EOS.Gates, EOS.Contracts | — *(Deferred Post-v1 — see §1.4; dependencies reflect registered intent, not an implemented project)* |
 | EOS.SDK | Principal Engineer | EOS.Core, EOS.SharedKernel, EOS.Contracts | EOS.Domain, EOS.Infrastructure |
 | EOS.Dashboard | Tech Lead | EOS.Contracts (read-only projections) | EOS.Application, EOS.Domain, EOS.Infrastructure |
 | EOS.Web | Senior Engineer (Web) | EOS.Dashboard, EOS.Contracts | EOS.Infrastructure directly |
@@ -497,6 +506,11 @@ EOS.sln
 - **EOS.Contracts is the only cross-role dependency surface.** This directly implements Constitution §0.1.1.5 and the Decision Matrix rule that Planner communicates through contracts only (§0.4, Part 2).
 - **EOS.Mobile is intentionally isolated** behind a runtime boundary (Dart/Flutter vs. .NET) and communicates only through `EOS.Contracts`-defined REST/gRPC/MCP surfaces exposed by `EOS.Application` — never linked in-process. This is what makes Mobile a first-class *peer* domain rather than an in-process frontend module (Part 15).
 - **EOS.Runner is the only project allowed to reference everything** — it is pure composition (DI wiring), not logic.
+
+## 1.4 EOS.Pipeline Status
+
+`EOS.Pipeline` (CI/CD) remains registered above as a Part 1 project skeleton and event participant (`PipelineCompleted`, `BenchmarkCompleted`, `MobileBuildCompleted` — Part 3), but it is **Deferred (Post-v1)**: no specification exists for it beyond this one-line registration, and `EOS-Implementation-Roadmap-v1.0.md` explicitly excludes its implementation from all 30 Work Packages, consistent with `Architecture-Validation-Report-v1.0.md` §17.2 Blocker #4's recommendation that it receive its own lightweight specification before implementation. This status marking is administrative only — it registers a decision already made in the Implementation Roadmap, not a new one.
+
 # PART 2 — Module Dependency Rules
 
 ## 2.1 Core Rules
@@ -811,6 +825,18 @@ prompts/
 ## 10.2 Loading Rule
 
 Configuration files are loaded once at Bootstrap (Part 12), cached in Redis (Part 4), and hot-reloadable only for `FeatureFlags.json` and `Thresholds.json` — all other files require a Bootstrap re-run to change, preventing silent architectural drift from live config edits.
+
+## 10.3 Ownership, Storage & Validation Responsibility
+
+This section closes `Architecture-Validation-Report-v1.0.md` R3/R9's write-authority and validation-responsibility gap at the ownership level (§2.2, §6.2 of that report). It does not define a field-level schema — that is `EOS-Implementation-Roadmap-v1.0.md` WP-002's implementation task, not a documentation change.
+
+| Concern | Answer |
+|---|---|
+| **Owner (may write)** | The role named in §0.2.1 whose domain the file's content matches (`Planner.json` → Product Owner; `Providers.json`/`Inference.json` → AI Architect; `Thresholds.json` → Principal Engineer; `Security.json` → DevOps; `Dashboard.json` → Tech Lead; `Knowledge.json`/`Storage.json` → Principal Engineer; `FeatureFlags.json` → Product Owner; `EOS.json` → Principal Engineer). A write by any other role is a Decision-Matrix-governed action (§0.6) like any other risk-bearing change, not a bypass — no separate configuration-write authority model exists beyond the roles and Authority Levels already defined in §0.2.3. |
+| **Storage** | Each file is a versioned artifact in a top-level `config/` directory (repository root, sibling to `src/` — see Part 1 §1.1), loaded by `EOS.Runner` into the Bootstrap-time cache (§10.2) — not a database table, not a separate service. This is the simplest option consistent with the ten-file structure already in place; it introduces no new storage technology. |
+| **Loading strategy** | As stated in §10.2 — unchanged by this section. |
+| **Validation responsibility** | `EOS.Runner`'s Bootstrap sequence (Part 12, step "Validate") is the sole validation point: every file is parsed and checked against its schema (WP-002) before Bootstrap proceeds to "Ready." A malformed file fails Bootstrap closed — no subsystem performs its own redundant validation of a file it merely reads. This reuses the fail-closed posture already established for Protection Layer (Protection-Layer-Specification-v1.0 §26) rather than introducing a new validation mechanism. |
+
 # PART 11 — EOS SDK
 
 ## 11.1 Modules
