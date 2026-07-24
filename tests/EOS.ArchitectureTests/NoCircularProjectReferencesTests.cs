@@ -24,7 +24,6 @@ public class NoCircularProjectReferencesTests
         {
             var projectName = Path.GetFileNameWithoutExtension(projectFile);
             var document = XDocument.Load(projectFile);
-            var projectDirectory = Path.GetDirectoryName(projectFile)!;
 
             var references = document
                 .Descendants("ProjectReference")

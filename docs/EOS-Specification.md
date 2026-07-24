@@ -515,7 +515,7 @@ EOS.sln
 
 ## 2.1 Core Rules
 
-1. **CTO may inspect all modules.** `EOS.CTO` holds a read-only reflection/reporting dependency on every project for audit purposes, enforced as *read-only* by fitness rule R-01 (no write-capable interface may be referenced).
+1. **CTO may inspect all modules.** `EOS.CTO` exercises this read-only inspection capability through `EOS.Knowledge`'s aggregated cross-module state (Knowledge Graph, Event Catalog replay, Artifact Registry) — the same dependency already listed in Part 1 §1.2's ownership table (`EOS.Contracts`, `EOS.Knowledge`) — not through a direct reflection/reporting dependency on every project's assembly. Part 1 §1.2's dependency table is authoritative for `EOS.CTO`'s actual project references; fitness rule R-01 (no write-capable interface may be referenced) governs the read-only nature of whatever CTO consumes through this path. *(Clarified 2026-07-25 — see Changelog.)*
 2. **Senior Engineer may never reference CTO.** Enforced by fitness rule R-02 — a compile-time forbidden-reference test.
 3. **Planner communicates through contracts only.** `EOS.Planner` may only depend on `EOS.Contracts` and `EOS.Knowledge` — never on concrete role projects. Fitness rule R-03.
 4. **Dashboard never references implementation.** `EOS.Dashboard` may depend only on `EOS.Contracts` read-projections. Fitness rule R-04.
@@ -1155,3 +1155,11 @@ See Part 1 §1.1 (Solution Structure) and §1.2 (Project Ownership) — reproduc
 | Meta learning compounding | Specified, not yet exercised | Needs a live Lesson corpus to validate the pipeline end-to-end |
 
 **Overall readiness: specification-complete, implementation not yet started.** This document is the Phase 0 entry criterion for the Implementation Roadmap (F.3).
+
+---
+
+## Changelog
+
+| Date | Section | Change |
+|---|---|---|
+| 2026-07-25 | Part 2 §2.1, Rule 1 | **Clarification, not a redesign.** WP-001's implementation review surfaced an inconsistency between this rule's original wording ("`EOS.CTO` holds a read-only reflection/reporting dependency on every project") and Part 1 §1.2's dependency table, which lists `EOS.CTO`'s actual dependencies as only `EOS.Contracts` and `EOS.Knowledge`. Rule 1 is corrected to state that CTO's "inspect all modules" capability is realized through `EOS.Knowledge`'s aggregated cross-module state (Knowledge Graph, Event Catalog replay, Artifact Registry), consistent with Part 1 §1.2's already-implemented dependency table — not through a direct per-project reflection dependency. CTO's authority and read-only responsibility are unchanged; only the described mechanism is corrected. No production code changed as a result of this edit.

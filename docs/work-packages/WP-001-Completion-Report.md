@@ -92,3 +92,24 @@ dotnet format EOS.slnx --verify-no-changes → exit 0 (no changes required)
 # Next Work Package
 
 Repository is ready for WP-002.
+
+# Final Closure
+
+**Quality fixes applied:**
+- Removed the unused `projectDirectory` local variable in `tests/EOS.ArchitectureTests/NoCircularProjectReferencesTests.cs` (identified in the WP-001 self-review; the compiler did not flag it as CS0219, but it was genuine dead code). No other change made to the file or test logic.
+
+**Documentation synchronization completed:**
+- Corrected `docs/EOS-Specification.md` Part 2 §2.1, Rule 1 (`EOS.CTO` cross-module inspection), which conflicted with Part 1 §1.2's dependency table. The rule now states CTO's "inspect all modules" capability is realized through `EOS.Knowledge`'s aggregated cross-module state, matching Part 1 §1.2's already-implemented dependency list (`EOS.Contracts`, `EOS.Knowledge`). CTO's authority and responsibility are unchanged — only the described mechanism was corrected. A dated entry was added to a new `## Changelog` section at the end of that document. No production code changed as part of this step.
+
+**Final verification status:**
+```
+dotnet restore EOS.slnx   → succeeded, no errors
+dotnet build EOS.slnx     → Build succeeded. 0 Warning(s), 0 Error(s)
+dotnet test EOS.slnx      → Passed! 1/1, Duration: 74 ms
+dotnet format --verify-no-changes → exit 0
+```
+
+**Git commit hash:** the commit tagged `v0.1.0-wp001` below (self-referential — recording a literal hash inside the commit that creates it is not possible; resolve via `git rev-parse v0.1.0-wp001`).
+**Git tag:** `v0.1.0-wp001`
+**Date and time:** 2026-07-25 01:27 EEST
+**Repository state:** Clean after commit; all WP-001 closure changes (test fix, documentation fix, this report) included in the single final closure commit referenced above.
