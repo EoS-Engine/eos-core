@@ -32,6 +32,10 @@ public sealed class DataStoreHealthChecker(DataStoreConnectionOptions connection
 
             return new StoreHealthResult("SQL Server", true, null);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new StoreHealthResult("SQL Server", false, ex.Message);
@@ -63,6 +67,10 @@ public sealed class DataStoreHealthChecker(DataStoreConnectionOptions connection
             response.EnsureSuccessStatusCode();
 
             return new StoreHealthResult("ChromaDB", true, null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

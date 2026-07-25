@@ -63,6 +63,7 @@ public class SqlServerConnectivityTests
         Assert.Equal(storedEvent.Producer, readBack.Producer);
         Assert.Equal(storedEvent.CorrelationId, readBack.CorrelationId);
         Assert.Equal(storedEvent.CausationId, readBack.CausationId);
+        Assert.Equal(storedEvent.OccurredAt, readBack.OccurredAt);
         Assert.Equal(storedEvent.PayloadJson, readBack.PayloadJson);
     }
 }
