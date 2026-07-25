@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EOS.SharedKernel\EOS.SharedKernel.csproj" />
+    <ProjectReference Include="..\EOS.Infrastructure\EOS.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>
