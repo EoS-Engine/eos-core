@@ -2,6 +2,7 @@ bin/
 obj/
 *.user
 .vs/
+.env
 .vscode/*
 !.vscode/extensions.json
 

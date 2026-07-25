@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using EOS.Infrastructure;
 using EOS.SharedKernel.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -63,6 +64,7 @@ public sealed class BootstrapRunner(ILogger<BootstrapRunner> logger)
         KnowledgeOptions? knowledgeOptions = null;
         StorageOptions? storageOptions = null;
         FeatureFlagsOptions? featureFlagsOptions = null;
+        IReadOnlyList<StoreHealthResult>? storeHealthResults = null;
 
         runner.AddStep("Install", _ =>
         {
@@ -120,14 +122,23 @@ public sealed class BootstrapRunner(ILogger<BootstrapRunner> logger)
             return Task.CompletedTask;
         });
 
-        runner.AddStep("Start Infrastructure", _ =>
+        runner.AddStep("Start Infrastructure", async cancellationToken =>
         {
             if (storageOptions is null || string.IsNullOrWhiteSpace(storageOptions.DataDirectory))
             {
                 throw new ConfigurationValidationException("StorageOptions.DataDirectory is not set.");
             }
 
-            return Task.CompletedTask;
+            var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
+            var healthChecker = new DataStoreHealthChecker(connectionOptions, storageOptions.DataDirectory);
+            storeHealthResults = await healthChecker.CheckAllAsync(cancellationToken);
+
+            var unhealthy = storeHealthResults.Where(r => !r.Healthy).ToList();
+            if (unhealthy.Count > 0)
+            {
+                var details = string.Join("; ", unhealthy.Select(r => $"{r.StoreName}: {r.Error}"));
+                throw new ConfigurationValidationException($"One or more data stores are unreachable: {details}");
+            }
         });
 
         runner.AddStep("Health Check", _ =>
@@ -136,6 +147,11 @@ public sealed class BootstrapRunner(ILogger<BootstrapRunner> logger)
             {
                 throw new ConfigurationValidationException(
                     "ThresholdsOptions.ResourceCriticalPercent must be greater than ResourceWarningPercent.");
+            }
+
+            if (storeHealthResults is null || storeHealthResults.Any(r => !r.Healthy))
+            {
+                throw new ConfigurationValidationException("Not all data stores reported healthy during Start Infrastructure.");
             }
 
             return Task.CompletedTask;
