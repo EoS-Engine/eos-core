@@ -35,5 +35,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/EOS.ArchitectureTests/EOS.ArchitectureTests.csproj" />
+    <Project Path="tests/EOS.Runner.Tests/EOS.Runner.Tests.csproj" />
   </Folder>
 </Solution>

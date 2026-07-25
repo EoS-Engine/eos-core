@@ -1,0 +1,5 @@
+{
+  "providers": [
+    { "name": "ollama", "endpoint": "http://localhost:11434", "priority": 1 }
+  ]
+}

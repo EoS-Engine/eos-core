@@ -1,0 +1,5 @@
+{
+  "defaultModel": "qwen2.5-coder:7b",
+  "maxTokens": 4096,
+  "temperature": 0.2
+}

@@ -1,0 +1,4 @@
+{
+  "defaultRiskTolerance": 50,
+  "replanningCadenceMinutes": 60
+}
