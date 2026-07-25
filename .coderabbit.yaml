@@ -1,0 +1,50 @@
+# CodeRabbit configuration for EOS (Engineering Operating System)
+# CodeRabbit is a review assistant only — it has no authority to change
+# the frozen EOS architecture, specifications, or approved Work Package scope.
+# See docs/EOS-Specification.md and docs/EOS-Implementation-Roadmap-v1.0.md
+# for the actual source of truth.
+
+language: "en-US"
+
+tone_instructions: >
+  Be concise and constructive. Avoid stylistic nitpicks. Focus on
+  correctness, security, and real architectural violations only.
+
+reviews:
+  profile: "chill"
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: true
+  request_changes_workflow: false
+
+  path_filters:
+    - "!**/bin/**"
+    - "!**/obj/**"
+    - "!**/build/**"
+    - "!**/.dart_tool/**"
+
+  path_instructions:
+    - path: "**/*"
+      instructions: >
+        EOS review policy: docs/EOS-Specification.md and the other
+        docs/*.md specification files are frozen and authoritative —
+        never propose changing them or the architecture they define.
+        Review code only against the current Work Package's approved
+        plan (docs/WP-*-Implementation-Plan.md). Do not flag deferred
+        or future-Work-Package functionality as missing. Do not treat
+        stubs explicitly permitted by the current Work Package as
+        defects. Prefer KISS/YAGNI — do not request speculative
+        abstractions, generalization, or scope expansion. If a finding
+        would require an architecture change, report it as a conflict
+        with the frozen specification instead of prescribing a fix.
+        Focus on correctness, security, testability, and maintainability.
+
+  finishing_touches:
+    autofix:
+      enabled: false
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
