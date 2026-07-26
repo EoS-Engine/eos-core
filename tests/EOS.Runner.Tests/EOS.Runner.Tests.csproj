@@ -13,6 +13,13 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\EOS.Runner\EOS.Runner.csproj" />
     <ProjectReference Include="..\..\src\EOS.SharedKernel\EOS.SharedKernel.csproj" />
+    <ProjectReference Include="..\..\src\EOS.Contracts\EOS.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\EOS.Reasoning\EOS.Reasoning.csproj" />
+    <ProjectReference Include="..\..\src\EOS.AIProvider\EOS.AIProvider.csproj" />
+    <ProjectReference Include="..\..\src\EOS.Gates\EOS.Gates.csproj" />
+    <ProjectReference Include="..\..\src\EOS.Knowledge\EOS.Knowledge.csproj" />
+    <ProjectReference Include="..\..\src\EOS.KnowledgeGraph\EOS.KnowledgeGraph.csproj" />
+    <ProjectReference Include="..\..\src\EOS.Infrastructure\EOS.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

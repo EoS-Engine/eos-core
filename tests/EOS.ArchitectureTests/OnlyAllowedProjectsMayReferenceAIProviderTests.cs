@@ -14,6 +14,11 @@ public class OnlyAllowedProjectsMayReferenceAIProviderTests
         // explicit carve-out), deferred here from WP-005 and resolved in WP-008.
         "EOS.Reasoning",
         "EOS.Reasoning.Tests",
+
+        // EOS.Runner is the composition root (Constitution Part 1 §1.3, "may reference
+        // everything"), resolved in WP-009.
+        "EOS.Runner",
+        "EOS.Runner.Tests",
     };
 
     [Fact]
