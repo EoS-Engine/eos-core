@@ -9,6 +9,11 @@ public class OnlyAllowedProjectsMayReferenceAIProviderTests
         "EOS.AIProvider",
         "EOS.AIProvider.Tests",
         "EOS.ArchitectureTests",
+
+        // EOS.Reasoning is the sole IAIProviderClient consumer (Constitution Part 1 §1.2's
+        // explicit carve-out), deferred here from WP-005 and resolved in WP-008.
+        "EOS.Reasoning",
+        "EOS.Reasoning.Tests",
     };
 
     [Fact]

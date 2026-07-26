@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\EOS.Contracts\EOS.Contracts.csproj" />
     <ProjectReference Include="..\EOS.SDK\EOS.SDK.csproj" />
+    <ProjectReference Include="..\EOS.AIProvider\EOS.AIProvider.csproj" />
   </ItemGroup>
 
 </Project>
