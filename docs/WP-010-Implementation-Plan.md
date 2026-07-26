@@ -30,9 +30,11 @@ Replace WP-005's single hardcoded adapter with the full Provider Registry, Model
     - **`InferenceTimeoutSeconds` range ceiling:** `[Range(1, int.MaxValue)]` allowed config values that would throw `ArgumentOutOfRangeException` when mapped to `HttpClient.Timeout` (whose real ceiling is `Int32.MaxValue` milliseconds, ≈2,147,483 whole seconds). Narrowed to `[Range(1, 2_147_483)]`.
     - **Test quality (2 findings):** `AIProviderManagerFailoverIntegrationTests`'s Failover test now uses a hand-rolled `RecordingProviderEventLogger` stub (new test-only file, no mocking framework) to assert the unreachable candidate was actually attempted before the real one completed, rather than only checking the final result. `HealthMonitorTests.RecordSuccess_ResetsTheFailureCountAndAvailability` now also asserts one post-reset failure keeps the provider available (proving the failure counter, not just the flag, was reset).
 
-## Included Scope (roadmap, verbatim)
+## Included Scope (roadmap, verbatim, with WP-010's actual delivered scope noted)
 
-Full Provider/Model Registry with `Providers.json`-driven configuration; the complete routing algorithm (§15.7) including capability/health/resource/priority/policy filtering (scoped per Decision 9 above); Health Monitoring (availability, latency, failure detection); Failover to a ranked candidate list.
+Full Provider/Model Registry with `Providers.json`-driven configuration; the complete routing algorithm (§15.7) including capability/health/resource/priority/policy filtering; Health Monitoring (availability, latency, failure detection); Failover to a ranked candidate list.
+
+**Delivered this WP (per Decision 9):** capability filtering (§15.1) and health filtering (§15.3) are implemented; ranking uses `Providers.json`'s preference-order weighting (§15.2/line 276/336) only. Resource filtering (Inference Budget headroom), the request-level `InferenceRequest.Priority` field (§15.4), and policy filtering (Protection/user-policy, §15.5/§15.6) are **not implemented this WP** — see Decision 9 for the full justification and deferral rationale.
 
 ## Explicitly Excluded Scope (roadmap, verbatim)
 
