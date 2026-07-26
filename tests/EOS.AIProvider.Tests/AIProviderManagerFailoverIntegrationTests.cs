@@ -32,18 +32,27 @@ public class AIProviderManagerFailoverIntegrationTests
         using var unreachableHttpClient = new HttpClient { BaseAddress = new Uri(unreachableProvider.Endpoint) };
         using var realHttpClient = new HttpClient { BaseAddress = new Uri(realProvider.Endpoint) };
 
-        var adapters = new Dictionary<string, IAIProviderClient>(StringComparer.Ordinal)
+        var adapters = new Dictionary<(string, string), IAIProviderClient>
         {
-            ["unreachable"] = new OllamaProviderAdapter(unreachableHttpClient, "unreachable-model", maxTokens: 16, temperature: 0.2),
-            ["ollama"] = new OllamaProviderAdapter(realHttpClient, "qwen2.5-coder:7b", maxTokens: 16, temperature: 0.2),
+            [("unreachable", "unreachable-model")] = new OllamaProviderAdapter(
+                unreachableHttpClient, "unreachable-model", maxTokens: 16, temperature: 0.2),
+            [("ollama", "qwen2.5-coder:7b")] = new OllamaProviderAdapter(
+                realHttpClient, "qwen2.5-coder:7b", maxTokens: 16, temperature: 0.2),
         };
 
-        var manager = new AIProviderManager(router, healthMonitor, adapters, new NoOpProviderEventLogger());
+        var recordingLogger = new RecordingProviderEventLogger();
+        var manager = new AIProviderManager(router, healthMonitor, adapters, recordingLogger);
 
         var result = await manager.InferAsync(CreateRequest());
 
         Assert.True(result.Success, result.ErrorMessage);
         Assert.Equal("qwen2.5-coder:7b", result.Model);
+
+        var unreachableIndex = recordingLogger.Messages.ToList().FindIndex(m => m.Contains("unreachable"));
+        var ollamaCompletedIndex = recordingLogger.Messages.ToList().FindIndex(m => m.StartsWith("InferenceCompleted") && m.Contains("ollama"));
+        Assert.True(unreachableIndex >= 0, "Expected a log entry referencing the unreachable candidate.");
+        Assert.True(ollamaCompletedIndex >= 0, "Expected an InferenceCompleted log entry for ollama.");
+        Assert.True(unreachableIndex < ollamaCompletedIndex, "Expected the unreachable candidate to be attempted before ollama completed.");
     }
 
     [Fact]
@@ -53,7 +62,7 @@ public class AIProviderManagerFailoverIntegrationTests
         var registry = new ProviderRegistry([provider]);
         var healthMonitor = new HealthMonitor(new HealthThresholds(3, TimeSpan.FromSeconds(30)), new NoOpProviderEventLogger());
         var router = new InferenceRouter(registry, healthMonitor);
-        var adapters = new Dictionary<string, IAIProviderClient>(StringComparer.Ordinal);
+        var adapters = new Dictionary<(string, string), IAIProviderClient>();
         var manager = new AIProviderManager(router, healthMonitor, adapters, new NoOpProviderEventLogger());
 
         var result = await manager.InferAsync(CreateRequest());

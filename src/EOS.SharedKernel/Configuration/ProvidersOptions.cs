@@ -7,6 +7,7 @@ public sealed record ModelEntry
     [Required, MinLength(1)]
     public required string Name { get; init; }
 
+    [Required, MinLength(1)]
     public required IReadOnlyList<string> Capabilities { get; init; }
 }
 
@@ -21,7 +22,7 @@ public sealed record ProviderEntry
     [Range(1, int.MaxValue)]
     public required int Priority { get; init; }
 
-    [Required]
+    [Required, MinLength(1)]
     public required IReadOnlyList<ModelEntry> Models { get; init; }
 }
 

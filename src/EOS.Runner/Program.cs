@@ -49,13 +49,22 @@ var httpClients = providersOptions.Providers.Select(provider => new HttpClient
 
 try
 {
-    var adapters = providersOptions.Providers.Zip(httpClients, (provider, httpClient) =>
-    {
-        var modelName = provider.Models.Count > 0 ? provider.Models[0].Name : inferenceOptions.DefaultModel;
-        IAIProviderClient adapter = new OllamaProviderAdapter(
-            httpClient, modelName, inferenceOptions.MaxTokens, inferenceOptions.Temperature);
-        return (provider.Name, adapter);
-    }).ToDictionary(x => x.Name, x => x.adapter, StringComparer.Ordinal);
+    var adapters = providersOptions.Providers.Zip(httpClients)
+        .SelectMany(pair =>
+        {
+            var (provider, httpClient) = pair;
+            var models = provider.Models.Count > 0
+                ? provider.Models.Select(model => model.Name)
+                : [inferenceOptions.DefaultModel];
+
+            return models.Select(modelName =>
+            {
+                IAIProviderClient adapter = new OllamaProviderAdapter(
+                    httpClient, modelName, inferenceOptions.MaxTokens, inferenceOptions.Temperature);
+                return ((provider.Name, modelName), adapter);
+            });
+        })
+        .ToDictionary(x => x.Item1, x => x.adapter);
 
     var providerRegistry = new ProviderRegistry(providerProfiles);
     var healthThresholds = new HealthThresholds(

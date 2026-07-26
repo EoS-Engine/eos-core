@@ -16,6 +16,6 @@ public sealed record ThresholdsOptions
     [Range(1, int.MaxValue)]
     public required int ProviderRecoveryProbeIntervalSeconds { get; init; }
 
-    [Range(1, int.MaxValue)]
+    [Range(1, 2_147_483)]
     public required int InferenceTimeoutSeconds { get; init; }
 }

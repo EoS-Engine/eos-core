@@ -62,5 +62,7 @@ public class HealthMonitorTests
         monitor.RecordSuccess("ollama");
 
         Assert.True(monitor.IsAvailable("ollama"));
+        monitor.RecordFailure("ollama");
+        Assert.True(monitor.IsAvailable("ollama"));
     }
 }

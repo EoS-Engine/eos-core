@@ -5,7 +5,7 @@ namespace EOS.AIProvider;
 public sealed class AIProviderManager(
     InferenceRouter router,
     HealthMonitor healthMonitor,
-    IReadOnlyDictionary<string, IAIProviderClient> adapters,
+    IReadOnlyDictionary<(string ProviderName, string ModelName), IAIProviderClient> adapters,
     IProviderEventLogger logger) : IAIProviderClient
 {
     public async Task<InferenceResult> InferAsync(InferenceRequest request, CancellationToken cancellationToken = default)
@@ -24,9 +24,10 @@ public sealed class AIProviderManager(
 
         foreach (var candidate in candidates)
         {
-            var adapter = adapters[candidate.Provider.Name];
+            var adapter = adapters[(candidate.Provider.Name, candidate.Model.Name)];
 
-            logger.LogEvent($"InferenceRouted: {candidate.Provider.Name}/{candidate.Model.Name}");
+            logger.LogEvent(
+                $"InferenceRouted: {candidate.Provider.Name}/{candidate.Model.Name} (correlationId={request.CorrelationId})");
 
             var result = await adapter.InferAsync(request, cancellationToken);
 
@@ -34,10 +35,14 @@ public sealed class AIProviderManager(
             {
                 healthMonitor.RecordSuccess(candidate.Provider.Name, result.Latency);
                 logger.LogEvent(
-                    $"InferenceCompleted: {candidate.Provider.Name}/{candidate.Model.Name} ({result.Latency?.TotalMilliseconds:F0}ms)");
+                    $"InferenceCompleted: {candidate.Provider.Name}/{candidate.Model.Name} " +
+                    $"({result.Latency?.TotalMilliseconds:F0}ms, correlationId={request.CorrelationId})");
                 return result;
             }
 
+            logger.LogWarning(
+                $"InferenceAttemptFailed: {candidate.Provider.Name}/{candidate.Model.Name} " +
+                $"correlationId={request.CorrelationId}: {result.ErrorMessage}");
             healthMonitor.RecordFailure(candidate.Provider.Name, result.Latency);
             lastFailure = result;
         }
