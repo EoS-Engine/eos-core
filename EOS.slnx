@@ -34,6 +34,7 @@
     <Project Path="src/EOS.Web/EOS.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/EOS.AIProvider.Tests/EOS.AIProvider.Tests.csproj" />
     <Project Path="tests/EOS.ArchitectureTests/EOS.ArchitectureTests.csproj" />
     <Project Path="tests/EOS.Infrastructure.Tests/EOS.Infrastructure.Tests.csproj" />
     <Project Path="tests/EOS.Orchestrator.Tests/EOS.Orchestrator.Tests.csproj" />
