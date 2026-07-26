@@ -15,6 +15,11 @@ public class OnlyAllowedProjectsMayReferenceEOSGatesTests
         "EOS.PrincipalEngineer",
         "EOS.QA",
         "EOS.Pipeline",
+
+        // EOS.Runner is the composition root (Constitution Part 1 §1.3, "may reference
+        // everything"), resolved in WP-009.
+        "EOS.Runner",
+        "EOS.Runner.Tests",
     };
 
     [Fact]
