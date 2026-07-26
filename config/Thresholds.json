@@ -1,4 +1,7 @@
 {
   "resourceWarningPercent": 75,
-  "resourceCriticalPercent": 90
+  "resourceCriticalPercent": 90,
+  "providerFailureThreshold": 3,
+  "providerRecoveryProbeIntervalSeconds": 30,
+  "inferenceTimeoutSeconds": 100
 }

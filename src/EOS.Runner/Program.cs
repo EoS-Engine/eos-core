@@ -6,6 +6,7 @@ using EOS.KnowledgeGraph;
 using EOS.Reasoning;
 using EOS.Runner.Bootstrap;
 using EOS.Runner.Commands;
+using EOS.SDK;
 using EOS.SharedKernel.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -30,21 +31,68 @@ if (args is not ["ask", var text])
 
 var providersOptions = loader.Load<ProvidersOptions>("Providers.json");
 var inferenceOptions = loader.Load<InferenceOptions>("Inference.json");
-var ollamaEndpoint = providersOptions.Providers.Single(p => p.Name == "ollama").Endpoint;
+var thresholdsOptions = loader.Load<ThresholdsOptions>("Thresholds.json");
 
-using var httpClient = new HttpClient { BaseAddress = new Uri(ollamaEndpoint) };
-var aiProviderClient = new OllamaProviderAdapter(
-    httpClient, inferenceOptions.DefaultModel, inferenceOptions.MaxTokens, inferenceOptions.Temperature);
-var reasoningEngine = new ReasoningEngine(aiProviderClient);
+var providerProfiles = providersOptions.Providers
+    .Select(provider => new ProviderProfile(
+        provider.Name,
+        provider.Endpoint,
+        provider.Priority,
+        provider.Models.Select(model => new ModelProfile(model.Name, model.Capabilities)).ToList()))
+    .ToList();
 
-var protectionGate = new ProtectionGate(host.Services.GetRequiredService<ILogger<ProtectionGate>>());
+var httpClients = providersOptions.Providers.Select(provider => new HttpClient
+{
+    BaseAddress = new Uri(provider.Endpoint),
+    Timeout = TimeSpan.FromSeconds(thresholdsOptions.InferenceTimeoutSeconds),
+}).ToList();
 
-var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
-var knowledgeGraphStore = new KnowledgeGraphStore(connectionOptions.SqlServerConnectionString);
-await knowledgeGraphStore.EnsureTableExistsAsync(CancellationToken.None);
-var knowledgeClient = new KnowledgeClient(knowledgeGraphStore);
+try
+{
+    var adapters = providersOptions.Providers.Zip(httpClients, (provider, httpClient) =>
+    {
+        var modelName = provider.Models.Count > 0 ? provider.Models[0].Name : inferenceOptions.DefaultModel;
+        IAIProviderClient adapter = new OllamaProviderAdapter(
+            httpClient, modelName, inferenceOptions.MaxTokens, inferenceOptions.Temperature);
+        return (provider.Name, adapter);
+    }).ToDictionary(x => x.Name, x => x.adapter, StringComparer.Ordinal);
 
-var askCommand = new AskCommand(
-    reasoningEngine, protectionGate, knowledgeClient, host.Services.GetRequiredService<ILogger<AskCommand>>());
+    var providerRegistry = new ProviderRegistry(providerProfiles);
+    var healthThresholds = new HealthThresholds(
+        thresholdsOptions.ProviderFailureThreshold, TimeSpan.FromSeconds(thresholdsOptions.ProviderRecoveryProbeIntervalSeconds));
+    var healthMonitor = new HealthMonitor(
+        healthThresholds, new LoggerProviderEventLogger(host.Services.GetRequiredService<ILogger<HealthMonitor>>()));
+    var inferenceRouter = new InferenceRouter(providerRegistry, healthMonitor);
+    var aiProviderClient = new AIProviderManager(
+        inferenceRouter,
+        healthMonitor,
+        adapters,
+        new LoggerProviderEventLogger(host.Services.GetRequiredService<ILogger<AIProviderManager>>()));
+    var reasoningEngine = new ReasoningEngine(aiProviderClient);
 
-return await askCommand.ExecuteAsync(text);
+    var protectionGate = new ProtectionGate(host.Services.GetRequiredService<ILogger<ProtectionGate>>());
+
+    var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
+    var knowledgeGraphStore = new KnowledgeGraphStore(connectionOptions.SqlServerConnectionString);
+    await knowledgeGraphStore.EnsureTableExistsAsync(CancellationToken.None);
+    var knowledgeClient = new KnowledgeClient(knowledgeGraphStore);
+
+    var askCommand = new AskCommand(
+        reasoningEngine, protectionGate, knowledgeClient, host.Services.GetRequiredService<ILogger<AskCommand>>());
+
+    return await askCommand.ExecuteAsync(text);
+}
+finally
+{
+    foreach (var httpClient in httpClients)
+    {
+        httpClient.Dispose();
+    }
+}
+
+internal sealed class LoggerProviderEventLogger(ILogger logger) : IProviderEventLogger
+{
+    public void LogEvent(string message) => logger.LogInformation("{Message}", message);
+
+    public void LogWarning(string message) => logger.LogWarning("{Message}", message);
+}
