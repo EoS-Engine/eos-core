@@ -72,11 +72,29 @@ public class ProtectionGateTests
         var logger = new RecordingLogger();
         var gate = new ProtectionGate(logger);
 
-        gate.Validate(CreateRequest(riskScore: 10));
+        var request = CreateRequest(riskScore: 10);
+        gate.Validate(request);
 
         var entry = Assert.Single(logger.Entries);
         Assert.Equal(LogLevel.Information, entry.Level);
-        Assert.Contains("Allow", entry.Message);
+        Assert.Contains($"ActionId={request.ActionId}", entry.Message);
+        Assert.Contains($"ActionType={request.ActionType}", entry.Message);
+        Assert.Contains($"Actor={request.Actor}", entry.Message);
+        Assert.Contains($"RiskScore={request.RiskScore}", entry.Message);
+        Assert.Contains($"Tier={RiskTier.Low}", entry.Message);
+        Assert.Contains($"Verdict={ProtectionVerdict.Allow}", entry.Message);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(101)]
+    public void Validate_ReturnsDeny_ForOutOfRangeRiskScore(int riskScore)
+    {
+        var gate = new ProtectionGate(new RecordingLogger());
+        var result = gate.Validate(CreateRequest(riskScore));
+
+        Assert.Equal(ProtectionVerdict.Deny, result.Verdict);
+        Assert.NotNull(result.Reason);
     }
 
     private sealed class RecordingLogger : ILogger<ProtectionGate>
