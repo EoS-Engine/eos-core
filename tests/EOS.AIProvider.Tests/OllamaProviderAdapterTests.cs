@@ -106,6 +106,28 @@ public class OllamaProviderAdapterTests
         Assert.Null(result.ErrorMessage);
     }
 
+    [Fact]
+    public async Task InferAsync_ReturnsMalformedResponse_WhenResponseIsNonEmptyButNotDone()
+    {
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent.Create(new
+            {
+                model = "qwen2.5-coder:7b",
+                response = "partial",
+                done = false,
+            }),
+        });
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:11434") };
+        var adapter = new OllamaProviderAdapter(httpClient, "qwen2.5-coder:7b", maxTokens: 4096, temperature: 0.2);
+        var request = CreateRequest();
+
+        var result = await adapter.InferAsync(request);
+
+        Assert.False(result.Success);
+        Assert.Equal(InferenceErrorType.MalformedResponse, result.ErrorType);
+    }
+
     private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

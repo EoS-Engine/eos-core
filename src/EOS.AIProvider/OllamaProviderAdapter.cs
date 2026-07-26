@@ -59,37 +59,40 @@ public sealed class OllamaProviderAdapter : IAIProviderClient
             return Failure(InferenceErrorType.ProviderUnavailable, ex.Message, stopwatch.Elapsed);
         }
 
-        if (!response.IsSuccessStatusCode)
+        using (response)
         {
-            return Failure(InferenceErrorType.ProviderUnavailable, $"Ollama returned HTTP status {(int)response.StatusCode}.", stopwatch.Elapsed);
-        }
+            if (!response.IsSuccessStatusCode)
+            {
+                return Failure(InferenceErrorType.ProviderUnavailable, $"Ollama returned HTTP status {(int)response.StatusCode}.", stopwatch.Elapsed);
+            }
 
-        OllamaGenerateResponse? parsed;
-        try
-        {
-            parsed = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>(cancellationToken);
-        }
-        catch (JsonException ex)
-        {
-            return Failure(InferenceErrorType.MalformedResponse, ex.Message, stopwatch.Elapsed);
-        }
+            OllamaGenerateResponse? parsed;
+            try
+            {
+                parsed = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>(cancellationToken);
+            }
+            catch (JsonException ex)
+            {
+                return Failure(InferenceErrorType.MalformedResponse, ex.Message, stopwatch.Elapsed);
+            }
 
-        stopwatch.Stop();
+            stopwatch.Stop();
 
-        if (parsed is null || string.IsNullOrEmpty(parsed.Response))
-        {
-            return Failure(InferenceErrorType.MalformedResponse, "Ollama response was empty or malformed.", stopwatch.Elapsed);
+            if (parsed is null || string.IsNullOrEmpty(parsed.Response) || !parsed.Done)
+            {
+                return Failure(InferenceErrorType.MalformedResponse, "Ollama response was empty, malformed, or incomplete.", stopwatch.Elapsed);
+            }
+
+            return new InferenceResult(
+                Success: true,
+                Output: parsed.Response,
+                Model: parsed.Model,
+                PromptTokens: parsed.PromptEvalCount,
+                CompletionTokens: parsed.EvalCount,
+                Latency: stopwatch.Elapsed,
+                ErrorType: null,
+                ErrorMessage: null);
         }
-
-        return new InferenceResult(
-            Success: true,
-            Output: parsed.Response,
-            Model: parsed.Model,
-            PromptTokens: parsed.PromptEvalCount,
-            CompletionTokens: parsed.EvalCount,
-            Latency: stopwatch.Elapsed,
-            ErrorType: null,
-            ErrorMessage: null);
     }
 
     private static InferenceResult Failure(InferenceErrorType errorType, string message, TimeSpan latency)

@@ -28,7 +28,7 @@ public class OnlyAllowedProjectsMayReferenceAIProviderTests
             var document = XDocument.Load(projectFile);
             var referencesAIProvider = document
                 .Descendants("ProjectReference")
-                .Select(element => element.Attribute("Include")!.Value)
+                .Select(element => element.Attribute("Include")!.Value.Replace('\\', '/'))
                 .Select(Path.GetFileNameWithoutExtension)
                 .Any(referencedProject => referencedProject == "EOS.AIProvider");
 
