@@ -11,7 +11,7 @@ Wire WP-005 through WP-008 together behind a single CLI entry point, proving the
 
 1. CLI wiring uses direct, sequential method calls (`ReasonAsync` → `Validate` → `UpdateAsync`) — no event emission (Gap 1).
 2. `EOS.Tools` is not modified; all real wiring lives in `EOS.Runner` (Gap 2).
-3. `AskCommand` independently loads `Providers.json`/`Inference.json` via a second `JsonConfigurationLoader` call; `BootstrapRunner` is not modified (Gap 3).
+3. `Program.cs` (the composition root) independently loads `Providers.json`/`Inference.json` via a second `JsonConfigurationLoader` call, and injects the resulting, already-constructed dependencies into `AskCommand`'s constructor; `AskCommand` itself never touches configuration loading directly; `BootstrapRunner` is not modified (Gap 3).
 4. `EOS.Runner.csproj` gains `ProjectReference`s to `EOS.Contracts`, `EOS.Reasoning`, `EOS.AIProvider`, `EOS.Gates`, `EOS.Knowledge`, `EOS.KnowledgeGraph`; both AI-Provider and Gates architecture whitelist tests extended to include `EOS.Runner`/`EOS.Runner.Tests` (Gap 4).
 5. `Decision → ActionRequest`: `RiskScore = (int)Math.Round(decision.RiskScore)`, `ActionType = "Decision"`, `Actor = request.RequestingRole` (Gap 5).
 6. `Decision → KnowledgeNode`: `NodeId = decision.DecisionId`, `NodeType = KnowledgeNodeType.Decision`, `Content = decision.SelectedHypothesis`, `DomainTags = []`, `EvidenceRefs = decision.EvidenceRefs` (Gap 6).
