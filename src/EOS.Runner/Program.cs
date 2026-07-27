@@ -80,7 +80,22 @@ try
         providerRegistry: providerRegistry);
     var reasoningEngine = new ReasoningEngine(aiProviderClient);
 
-    var protectionGate = new ProtectionGate(host.Services.GetRequiredService<ILogger<ProtectionGate>>());
+    var securityOptions = loader.Load<SecurityOptions>("Security.json");
+    var policyEngine = new PolicyEngine(
+        securityOptions.GlobalPolicies.Select(e => new EOS.Gates.PolicyEntry(e.ActionType, e.Verdict, e.Reason)).ToList(),
+        securityOptions.ProjectPolicies.Select(e => new EOS.Gates.PolicyEntry(e.ActionType, e.Verdict, e.Reason)).ToList(),
+        securityOptions.UserPolicies.Select(e => new EOS.Gates.PolicyEntry(e.ActionType, e.Verdict, e.Reason)).ToList(),
+        securityOptions.RuntimePolicies.Select(e => new EOS.Gates.PolicyEntry(e.ActionType, e.Verdict, e.Reason)).ToList());
+    var ruleEngine = new RuleEngine();
+    var riskEngine = new RiskEngine();
+    var approvalEngine = new ApprovalEngine();
+
+    var protectionGate = new ProtectionGate(
+        policyEngine,
+        ruleEngine,
+        riskEngine,
+        approvalEngine,
+        host.Services.GetRequiredService<ILogger<ProtectionGate>>());
 
     var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
     var knowledgeGraphStore = new KnowledgeGraphStore(connectionOptions.SqlServerConnectionString);

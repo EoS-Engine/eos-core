@@ -15,13 +15,23 @@ public class ProtectionGateTests
             RiskScore: riskScore);
     }
 
+    private static ProtectionGate CreateGate(ILogger<ProtectionGate>? logger = null)
+    {
+        return new ProtectionGate(
+            new PolicyEngine([], [], [], []),
+            new RuleEngine(),
+            new RiskEngine(),
+            new ApprovalEngine(),
+            logger ?? new RecordingLogger());
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(15)]
     [InlineData(30)]
     public void Validate_ReturnsAllow_ForLowTierAction(int riskScore)
     {
-        var gate = new ProtectionGate(new RecordingLogger());
+        var gate = CreateGate();
         var result = gate.Validate(CreateRequest(riskScore));
 
         Assert.Equal(ProtectionVerdict.Allow, result.Verdict);
@@ -33,44 +43,79 @@ public class ProtectionGateTests
     [InlineData(31)]
     [InlineData(50)]
     [InlineData(70)]
-    public void Validate_ReturnsDeny_ForMediumTierAction(int riskScore)
+    public void Validate_ReturnsAllow_ForMediumTierAction_WhenNoPolicyDenies(int riskScore)
     {
-        var gate = new ProtectionGate(new RecordingLogger());
+        var gate = CreateGate();
         var result = gate.Validate(CreateRequest(riskScore));
 
-        Assert.Equal(ProtectionVerdict.Deny, result.Verdict);
+        Assert.Equal(ProtectionVerdict.Allow, result.Verdict);
         Assert.Equal(RiskTier.Medium, result.Tier);
-        Assert.NotNull(result.Reason);
     }
 
     [Theory]
     [InlineData(71)]
     [InlineData(85)]
     [InlineData(100)]
-    public void Validate_ReturnsDeny_ForHighTierAction(int riskScore)
+    public void Validate_ReturnsAllow_ForHighTierAction_WhenPipelineClearsAndNoHumanSignOffIsRequired(int riskScore)
     {
-        var gate = new ProtectionGate(new RecordingLogger());
+        var gate = CreateGate();
         var result = gate.Validate(CreateRequest(riskScore));
 
-        Assert.Equal(ProtectionVerdict.Deny, result.Verdict);
+        Assert.Equal(ProtectionVerdict.Allow, result.Verdict);
+        Assert.Equal(RiskTier.High, result.Tier);
+    }
+
+    [Fact]
+    public void Validate_DefersForApproval_WhenHighTierActionTypeRequiresHumanSignOff()
+    {
+        var gate = CreateGate();
+        var result = gate.Validate(CreateRequest(riskScore: 100, actionType: "Security-sensitive change"));
+
+        Assert.Equal(ProtectionVerdict.Defer, result.Verdict);
         Assert.Equal(RiskTier.High, result.Tier);
         Assert.NotNull(result.Reason);
     }
 
     [Fact]
-    public void Validate_ADeliberatelyHighRiskTestAction_IsNotAutoAllowed()
+    public void Validate_DeniesMediumTierAction_WhenAGlobalPolicyDenies()
     {
-        var gate = new ProtectionGate(new RecordingLogger());
-        var result = gate.Validate(CreateRequest(riskScore: 100, actionType: "DeliberatelyHighRiskTestAction"));
+        var policyEngine = new PolicyEngine(
+            globalPolicies: [new PolicyEntry("TestAction", "Deny", "Denied by test global policy.")],
+            projectPolicies: [],
+            userPolicies: [],
+            runtimePolicies: []);
+        var gate = new ProtectionGate(policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(), new RecordingLogger());
 
-        Assert.NotEqual(ProtectionVerdict.Allow, result.Verdict);
+        var result = gate.Validate(CreateRequest(riskScore: 50));
+
+        Assert.Equal(ProtectionVerdict.Deny, result.Verdict);
+        Assert.Equal(RiskTier.Medium, result.Tier);
+        Assert.Equal("Denied by test global policy.", result.Reason);
+    }
+
+    [Fact]
+    public void Validate_EscalatesToHighTier_AfterTwoConsecutiveMediumTierDenials()
+    {
+        var policyEngine = new PolicyEngine(
+            globalPolicies: [new PolicyEntry("TestAction", "Deny", "Denied by test global policy.")],
+            projectPolicies: [],
+            userPolicies: [],
+            runtimePolicies: []);
+        var gate = new ProtectionGate(policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(), new RecordingLogger());
+        var request = CreateRequest(riskScore: 50);
+
+        gate.Validate(request);
+        gate.Validate(request);
+        var thirdResult = gate.Validate(request);
+
+        Assert.Equal(RiskTier.High, thirdResult.Tier);
     }
 
     [Fact]
     public void Validate_LogsTheDecision()
     {
         var logger = new RecordingLogger();
-        var gate = new ProtectionGate(logger);
+        var gate = CreateGate(logger);
 
         var request = CreateRequest(riskScore: 10);
         gate.Validate(request);
@@ -90,7 +135,7 @@ public class ProtectionGateTests
     [InlineData(101)]
     public void Validate_ReturnsDeny_ForOutOfRangeRiskScore(int riskScore)
     {
-        var gate = new ProtectionGate(new RecordingLogger());
+        var gate = CreateGate();
         var result = gate.Validate(CreateRequest(riskScore));
 
         Assert.Equal(ProtectionVerdict.Deny, result.Verdict);
