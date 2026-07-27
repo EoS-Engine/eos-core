@@ -19,6 +19,11 @@ public class OnlyAllowedProjectsMayReferenceAIProviderTests
         // everything"), resolved in WP-009.
         "EOS.Runner",
         "EOS.Runner.Tests",
+
+        // EOS.Knowledge.Tests proves the embedding channel is reachable from EOS.Knowledge's
+        // side (FR-AI3, structural enforcement), resolved in WP-011. Production EOS.Knowledge
+        // is deliberately not on this list — no production consumer exists yet.
+        "EOS.Knowledge.Tests",
     };
 
     [Fact]
