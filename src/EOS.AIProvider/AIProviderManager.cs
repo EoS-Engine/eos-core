@@ -72,6 +72,7 @@ public sealed class AIProviderManager(
     public async Task<Vector> EmbedAsync(string content, CancellationToken cancellationToken = default)
     {
         var candidates = router.Route("Embeddings");
+        Exception? lastFailure = null;
 
         foreach (var candidate in candidates)
         {
@@ -82,12 +83,30 @@ public sealed class AIProviderManager(
 
             logger.LogEvent($"EmbeddingRouted: {candidate.Provider.Name}/{candidate.Model.Name}");
 
-            var vector = await adapter.EmbedAsync(content, cancellationToken);
+            try
+            {
+                var vector = await adapter.EmbedAsync(content, cancellationToken);
 
-            healthMonitor.RecordSuccess(candidate.Provider.Name);
-            logger.LogEvent($"EmbeddingCompleted: {candidate.Provider.Name}/{candidate.Model.Name}");
+                healthMonitor.RecordSuccess(candidate.Provider.Name);
+                logger.LogEvent($"EmbeddingCompleted: {candidate.Provider.Name}/{candidate.Model.Name}");
 
-            return vector;
+                return vector;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning($"EmbeddingAttemptFailed: {candidate.Provider.Name}/{candidate.Model.Name}: {ex.Message}");
+                healthMonitor.RecordFailure(candidate.Provider.Name);
+                lastFailure = ex;
+            }
+        }
+
+        if (lastFailure is not null)
+        {
+            throw lastFailure;
         }
 
         throw new InvalidOperationException("No available provider supports the 'Embeddings' capability.");

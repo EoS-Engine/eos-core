@@ -6,17 +6,20 @@ namespace EOS.AIProvider.Tests;
 public class AIProviderManagerEmbedTests
 {
     [Fact]
-    public async Task EmbedAsync_RoutesToTheRankedCandidate_AndReturnsItsVector()
+    public async Task EmbedAsync_RoutesToTheHigherPriorityRankedCandidate_AndReturnsItsVector()
     {
-        var provider = new ProviderProfile("ollama", "http://localhost:11434", 1, [new ModelProfile("nomic-embed-text", ["Embeddings"])]);
-        var registry = new ProviderRegistry([provider]);
+        var higherPriorityProvider = new ProviderProfile("primary", "http://localhost:11434", 1, [new ModelProfile("nomic-embed-text", ["Embeddings"])]);
+        var lowerPriorityProvider = new ProviderProfile("secondary", "http://localhost:11434", 2, [new ModelProfile("nomic-embed-text", ["Embeddings"])]);
+        var registry = new ProviderRegistry([lowerPriorityProvider, higherPriorityProvider]);
         var healthMonitor = new HealthMonitor(new HealthThresholds(3, TimeSpan.FromSeconds(30)), new NoOpProviderEventLogger());
         var router = new InferenceRouter(registry, healthMonitor);
         var adapters = new Dictionary<(string, string), IAIProviderClient>();
         var expectedVector = new Vector([0.1f, 0.2f]);
+        var unexpectedVector = new Vector([0.9f, 0.9f]);
         var embeddingAdapters = new Dictionary<(string, string), IEmbeddingProviderClient>
         {
-            [("ollama", "nomic-embed-text")] = new StubEmbeddingClient(expectedVector),
+            [("primary", "nomic-embed-text")] = new StubEmbeddingClient(expectedVector),
+            [("secondary", "nomic-embed-text")] = new StubEmbeddingClient(unexpectedVector),
         };
 
         var manager = new AIProviderManager(

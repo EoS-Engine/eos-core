@@ -74,7 +74,7 @@ None.
 
 ## 11. Tests Added
 
-20 new tests: 4 unit + 1 integration for `OllamaEmbeddingAdapter`; 3 for `AIProviderManager.DiscoverCapabilities`; 2 for `AIProviderManager.EmbedAsync`; 1 structural-enforcement test in `EOS.Knowledge.Tests`.
+11 new tests: 4 unit + 1 integration for `OllamaEmbeddingAdapter`; 3 for `AIProviderManager.DiscoverCapabilities`; 2 for `AIProviderManager.EmbedAsync`; 1 structural-enforcement test in `EOS.Knowledge.Tests`.
 
 ## 12. Regression Strategy
 
@@ -110,3 +110,18 @@ Standard: revert the merge commit on `main` if a post-merge defect is found. No 
 ## 17. Final Architecture Verification
 
 No new project; no new package; one approved public-contract edit (G2), implemented via a default interface method specifically to avoid touching `OllamaProviderAdapter.cs`; one approved, constrained environment action (G4, `nomic-embed-text` only, local only); zero redesign of `ProviderRegistry`/`InferenceRouter`/`HealthMonitor`/`OllamaProviderAdapter`; `AIProviderManager` extended exactly along the line §10.1a already specified; no future-WP functionality; no new testing technique beyond the existing XML-based fitness-test pattern; no `Program.cs`/`config/Providers.json` change (the one constraint explicitly flagged as requiring an immediate stop, confirmed not triggered); smallest possible dependency graph (one test-only edge).
+
+## 18. CodeRabbit Resolution (PR #8, first review)
+
+6 findings (5 actionable + 1 nitpick), all VALID:
+
+| # | Finding | Action |
+|---|---|---|
+| 1 | Plan document claimed "20 new tests," actual count is 11 | Fixed — corrected §11 |
+| 2 | `EmbedAsync` didn't catch/record/fail over per-candidate failures | Fixed — added try/catch reusing `HealthMonitor`, mirroring `InferAsync`'s already-approved shape; no new architecture |
+| 3 | `AIProviderManager`'s `providerRegistry` parameter is never wired in `Program.cs`, so `DiscoverCapabilities()` always returns empty in production | **Valid but every fix requires touching `Program.cs` or `InferenceRouter.cs`, both explicitly forbidden by the approved plan.** Architecture Impact Report produced; no fix applied; awaiting explicit authorization to touch either file. |
+| 4 | `OllamaEmbeddingAdapter.EmbedAsync` never disposed its `HttpResponseMessage` | Fixed — `using` declaration added |
+| 5 | Malformed-JSON test asserted the overly broad `Assert.ThrowsAnyAsync<Exception>` | Fixed — narrowed to `JsonException` |
+| 6 (nitpick) | Failover-routing test used only one candidate, didn't prove priority ranking | Fixed — added a second, lower-priority candidate with a distinct vector, asserting the higher-priority one is returned |
+
+5 of 6 fixed directly (no architecture impact); 1 (#3) requires your explicit decision before any further code change.

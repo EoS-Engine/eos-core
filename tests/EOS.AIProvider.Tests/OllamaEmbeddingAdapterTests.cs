@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using EOS.AIProvider;
 
 namespace EOS.AIProvider.Tests;
@@ -32,7 +33,7 @@ public class OllamaEmbeddingAdapterTests
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:11434") };
         var adapter = new OllamaEmbeddingAdapter(httpClient, "nomic-embed-text");
 
-        await Assert.ThrowsAnyAsync<Exception>(() => adapter.EmbedAsync("test content"));
+        await Assert.ThrowsAsync<JsonException>(() => adapter.EmbedAsync("test content"));
     }
 
     [Fact]

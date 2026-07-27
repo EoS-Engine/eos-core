@@ -17,7 +17,7 @@ public sealed class OllamaEmbeddingAdapter : IEmbeddingProviderClient
 
     public async Task<Vector> EmbedAsync(string content, CancellationToken cancellationToken = default)
     {
-        var response = await _httpClient.PostAsJsonAsync(
+        using var response = await _httpClient.PostAsJsonAsync(
             "api/embeddings", new OllamaEmbeddingsRequest(_model, content), cancellationToken);
 
         response.EnsureSuccessStatusCode();
