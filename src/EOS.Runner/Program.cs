@@ -76,7 +76,8 @@ try
         inferenceRouter,
         healthMonitor,
         adapters,
-        new LoggerProviderEventLogger(host.Services.GetRequiredService<ILogger<AIProviderManager>>()));
+        new LoggerProviderEventLogger(host.Services.GetRequiredService<ILogger<AIProviderManager>>()),
+        providerRegistry: providerRegistry);
     var reasoningEngine = new ReasoningEngine(aiProviderClient);
 
     var protectionGate = new ProtectionGate(host.Services.GetRequiredService<ILogger<ProtectionGate>>());

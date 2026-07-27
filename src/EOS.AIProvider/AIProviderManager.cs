@@ -6,8 +6,13 @@ public sealed class AIProviderManager(
     InferenceRouter router,
     HealthMonitor healthMonitor,
     IReadOnlyDictionary<(string ProviderName, string ModelName), IAIProviderClient> adapters,
-    IProviderEventLogger logger) : IAIProviderClient
+    IProviderEventLogger logger,
+    IReadOnlyDictionary<(string ProviderName, string ModelName), IEmbeddingProviderClient>? embeddingAdapters = null,
+    ProviderRegistry? providerRegistry = null) : IAIProviderClient, IEmbeddingProviderClient
 {
+    private readonly IReadOnlyDictionary<(string ProviderName, string ModelName), IEmbeddingProviderClient> _embeddingAdapters =
+        embeddingAdapters ?? new Dictionary<(string, string), IEmbeddingProviderClient>();
+
     public async Task<InferenceResult> InferAsync(InferenceRequest request, CancellationToken cancellationToken = default)
     {
         var candidates = router.Route(request.CapabilityRequired);
@@ -49,6 +54,62 @@ public sealed class AIProviderManager(
 
         return lastFailure ?? Failure(
             InferenceErrorType.ProviderUnavailable, "No configured adapter was available for any ranked candidate.");
+    }
+
+    public CapabilitySet DiscoverCapabilities(string? capabilityFilter)
+    {
+        var providers = providerRegistry?.Providers ?? [];
+
+        var entries = providers
+            .SelectMany(provider => provider.Models.Select(model => new { provider, model }))
+            .Where(x => capabilityFilter is null || x.model.Capabilities.Contains(capabilityFilter, StringComparer.OrdinalIgnoreCase))
+            .Select(x => new CapabilityEntry(x.provider.Name, x.model.Name, x.model.Capabilities))
+            .ToList();
+
+        return new CapabilitySet(entries);
+    }
+
+    public async Task<Vector> EmbedAsync(string content, CancellationToken cancellationToken = default)
+    {
+        var candidates = router.Route("Embeddings");
+        Exception? lastFailure = null;
+
+        foreach (var candidate in candidates)
+        {
+            if (!_embeddingAdapters.TryGetValue((candidate.Provider.Name, candidate.Model.Name), out var adapter))
+            {
+                continue;
+            }
+
+            logger.LogEvent($"EmbeddingRouted: {candidate.Provider.Name}/{candidate.Model.Name}");
+
+            try
+            {
+                var vector = await adapter.EmbedAsync(content, cancellationToken);
+
+                healthMonitor.RecordSuccess(candidate.Provider.Name);
+                logger.LogEvent($"EmbeddingCompleted: {candidate.Provider.Name}/{candidate.Model.Name}");
+
+                return vector;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning($"EmbeddingAttemptFailed: {candidate.Provider.Name}/{candidate.Model.Name}: {ex.Message}");
+                healthMonitor.RecordFailure(candidate.Provider.Name);
+                lastFailure = ex;
+            }
+        }
+
+        if (lastFailure is not null)
+        {
+            throw lastFailure;
+        }
+
+        throw new InvalidOperationException("No available provider supports the 'Embeddings' capability.");
     }
 
     private static InferenceResult Failure(InferenceErrorType errorType, string message)

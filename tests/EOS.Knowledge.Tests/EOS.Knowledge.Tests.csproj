@@ -13,6 +13,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\EOS.Knowledge\EOS.Knowledge.csproj" />
     <ProjectReference Include="..\..\src\EOS.KnowledgeGraph\EOS.KnowledgeGraph.csproj" />
+    <ProjectReference Include="..\..\src\EOS.SDK\EOS.SDK.csproj" />
+    <ProjectReference Include="..\..\src\EOS.AIProvider\EOS.AIProvider.csproj" />
   </ItemGroup>
 
 </Project>
