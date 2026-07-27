@@ -1,3 +1,7 @@
 {
-  "secretsProvider": "local"
+  "secretsProvider": "local",
+  "globalPolicies": [],
+  "projectPolicies": [],
+  "userPolicies": [],
+  "runtimePolicies": []
 }

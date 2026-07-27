@@ -25,7 +25,9 @@ public class AskCommandIntegrationTests
         var aiProviderClient = new OllamaProviderAdapter(
             httpClient, inferenceOptions.DefaultModel, inferenceOptions.MaxTokens, inferenceOptions.Temperature);
         var reasoningEngine = new ReasoningEngine(aiProviderClient);
-        var protectionGate = new ProtectionGate(NullLogger<ProtectionGate>.Instance);
+        var protectionGate = new ProtectionGate(
+            new PolicyEngine([], [], [], []), new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
+            NullLogger<ProtectionGate>.Instance);
 
         var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
         var knowledgeGraphStore = new KnowledgeGraphStore(connectionOptions.SqlServerConnectionString);
@@ -48,7 +50,9 @@ public class AskCommandIntegrationTests
     public async Task ExecuteAsync_ReturnsNonZero_WhenTextIsEmpty()
     {
         var reasoningEngine = new ReasoningEngine(NeverCalledAIProviderClient.Instance);
-        var protectionGate = new ProtectionGate(NullLogger<ProtectionGate>.Instance);
+        var protectionGate = new ProtectionGate(
+            new PolicyEngine([], [], [], []), new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
+            NullLogger<ProtectionGate>.Instance);
         var askCommand = new AskCommand(
             reasoningEngine, protectionGate, NeverCalledKnowledgeClient.Instance, NullLogger<AskCommand>.Instance);
 
