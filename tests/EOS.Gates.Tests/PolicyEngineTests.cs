@@ -74,4 +74,19 @@ public class PolicyEngineTests
         Assert.False(decision.Allow);
         Assert.Equal("Everything denied by wildcard.", decision.Reason);
     }
+
+    [Fact]
+    public void Evaluate_MatchesActionType_CaseInsensitively()
+    {
+        var engine = new PolicyEngine(
+            globalPolicies: [new PolicyEntry("Deploy", "Deny", "Deploys are globally restricted.")],
+            projectPolicies: [],
+            userPolicies: [],
+            runtimePolicies: []);
+
+        var decision = engine.Evaluate("deploy");
+
+        Assert.False(decision.Allow);
+        Assert.Equal("Deploys are globally restricted.", decision.Reason);
+    }
 }

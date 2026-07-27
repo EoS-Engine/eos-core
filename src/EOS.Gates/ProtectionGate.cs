@@ -22,6 +22,16 @@ public sealed class ProtectionGate(
             return invalid;
         }
 
+        if (string.IsNullOrWhiteSpace(action.Actor) || string.IsNullOrWhiteSpace(action.ActionType))
+        {
+            var invalid = new ValidationResult(
+                ProtectionVerdict.Deny,
+                RiskTier.High,
+                "Request Validation failed: malformed action.");
+            Log(action, invalid);
+            return invalid;
+        }
+
         var assessment = riskEngine.Assess(action.Actor, action.ActionType, action.RiskScore);
 
         var result = assessment.Tier switch
@@ -63,12 +73,7 @@ public sealed class ProtectionGate(
     private ValidationResult ValidateHighTier(ActionRequest action)
     {
         // §14.2 Full Pipeline (High tier only) — six steps, short-circuits on first denial (FR-P3).
-        // Step 1: Request Validation.
-        if (string.IsNullOrWhiteSpace(action.Actor) || string.IsNullOrWhiteSpace(action.ActionType))
-        {
-            return new ValidationResult(ProtectionVerdict.Deny, RiskTier.High, "Request Validation failed: malformed action.");
-        }
-
+        // Step 1 (Request Validation) already ran in Validate() before tier dispatch.
         // Steps 2-5 (Context/Knowledge/Decision/Resource Validation): this WP's ActionRequest
         // carries no ContextPayload/Explanation/Confidence/resource-budget data, and no real
         // Scheduler budget infrastructure exists yet (Constitution Part 7) — each step passes

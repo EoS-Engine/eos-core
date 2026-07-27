@@ -142,6 +142,32 @@ public class ProtectionGateTests
         Assert.NotNull(result.Reason);
     }
 
+    [Theory]
+    [InlineData(15)]
+    [InlineData(50)]
+    public void Validate_ReturnsDeny_ForBlankActionType_RegardlessOfTier(int riskScore)
+    {
+        var gate = CreateGate();
+        var result = gate.Validate(CreateRequest(riskScore, actionType: "   "));
+
+        Assert.Equal(ProtectionVerdict.Deny, result.Verdict);
+        Assert.NotNull(result.Reason);
+    }
+
+    [Theory]
+    [InlineData(15)]
+    [InlineData(50)]
+    public void Validate_ReturnsDeny_ForBlankActor_RegardlessOfTier(int riskScore)
+    {
+        var gate = CreateGate();
+        var request = new ActionRequest(Guid.NewGuid(), "TestAction", Actor: " ", riskScore);
+
+        var result = gate.Validate(request);
+
+        Assert.Equal(ProtectionVerdict.Deny, result.Verdict);
+        Assert.NotNull(result.Reason);
+    }
+
     private sealed class RecordingLogger : ILogger<ProtectionGate>
     {
         public List<(LogLevel Level, string Message)> Entries { get; } = [];

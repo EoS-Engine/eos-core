@@ -7,7 +7,7 @@ public sealed record PolicyEntry
     [Required, MinLength(1)]
     public required string ActionType { get; init; }
 
-    [Required, MinLength(1)]
+    [Required, RegularExpression("^(?i:Allow|Deny)$")]
     public required string Verdict { get; init; }
 
     [Required, MinLength(1)]

@@ -12,6 +12,8 @@ public class RiskEngineTests
     [InlineData(70, RiskTier.Medium)]
     [InlineData(71, RiskTier.High)]
     [InlineData(100, RiskTier.High)]
+    [InlineData(-1, RiskTier.High)]
+    [InlineData(101, RiskTier.High)]
     public void Assess_ClassifiesTier_PerConstitution0_6_1Boundaries(int riskScore, RiskTier expectedTier)
     {
         var engine = new RiskEngine();
