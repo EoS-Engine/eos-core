@@ -4,6 +4,9 @@ namespace EOS.Knowledge.Tests;
 
 public class KnowledgeClientTests
 {
+    private static readonly RankingWeights DefaultRankingWeights = new(
+        VectorSimilarity: 0.4, Recency: 0.3, DomainMatch: 0.2, AccessFrequency: 0.1);
+
     private static string ConnectionString =>
         Environment.GetEnvironmentVariable("EOS_SQLSERVER_CONNECTION_STRING")
         ?? throw new InvalidOperationException("EOS_SQLSERVER_CONNECTION_STRING is not set.");
@@ -13,7 +16,7 @@ public class KnowledgeClientTests
     {
         var store = new KnowledgeGraphStore(ConnectionString);
         await store.EnsureTableExistsAsync(CancellationToken.None);
-        IKnowledgeClient client = new KnowledgeClient(store);
+        IKnowledgeClient client = new KnowledgeClient(store, DefaultRankingWeights);
         var nodeId = Guid.NewGuid();
 
         await client.UpdateAsync(
@@ -39,7 +42,7 @@ public class KnowledgeClientTests
     {
         var store = new KnowledgeGraphStore(ConnectionString);
         await store.EnsureTableExistsAsync(CancellationToken.None);
-        IKnowledgeClient client = new KnowledgeClient(store);
+        IKnowledgeClient client = new KnowledgeClient(store, DefaultRankingWeights);
         var nodeId = Guid.NewGuid();
 
         await client.UpdateAsync(nodeId, KnowledgeNodeType.Fact, "first", [], [], CancellationToken.None);

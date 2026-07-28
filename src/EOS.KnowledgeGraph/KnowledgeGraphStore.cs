@@ -77,4 +77,48 @@ public sealed class KnowledgeGraphStore(string connectionString)
             EvidenceRefs: JsonSerializer.Deserialize<string[]>(reader.GetString(4)) ?? [],
             CreatedAt: reader.GetDateTimeOffset(5));
     }
+
+    public async Task<IReadOnlyList<KnowledgeNode>> QueryAsync(
+        IReadOnlyList<KnowledgeNodeType> nodeTypes,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdTo,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var nodeTypeParameterNames = nodeTypes.Select((_, index) => $"@NodeType{index}").ToArray();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT NodeId, NodeType, Content, DomainTagsJson, EvidenceRefsJson, CreatedAt
+            FROM KnowledgeNode
+            WHERE NodeType IN ({string.Join(", ", nodeTypeParameterNames)})
+              AND (@CreatedFrom IS NULL OR CreatedAt >= @CreatedFrom)
+              AND (@CreatedTo IS NULL OR CreatedAt <= @CreatedTo)
+            """;
+
+        for (var index = 0; index < nodeTypeParameterNames.Length; index++)
+        {
+            command.Parameters.AddWithValue(nodeTypeParameterNames[index], nodeTypes[index].ToString());
+        }
+
+        command.Parameters.AddWithValue("@CreatedFrom", (object?)createdFrom ?? DBNull.Value);
+        command.Parameters.AddWithValue("@CreatedTo", (object?)createdTo ?? DBNull.Value);
+
+        var results = new List<KnowledgeNode>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(new KnowledgeNode(
+                NodeId: reader.GetGuid(0),
+                NodeType: Enum.Parse<KnowledgeNodeType>(reader.GetString(1)),
+                Content: reader.GetString(2),
+                DomainTags: JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? [],
+                EvidenceRefs: JsonSerializer.Deserialize<string[]>(reader.GetString(4)) ?? [],
+                CreatedAt: reader.GetDateTimeOffset(5)));
+        }
+
+        return results;
+    }
 }

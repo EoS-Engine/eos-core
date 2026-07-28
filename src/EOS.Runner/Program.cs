@@ -111,7 +111,12 @@ try
     var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
     var knowledgeGraphStore = new KnowledgeGraphStore(connectionOptions.SqlServerConnectionString);
     await knowledgeGraphStore.EnsureTableExistsAsync(CancellationToken.None);
-    var knowledgeClient = new KnowledgeClient(knowledgeGraphStore);
+    var rankingWeights = new RankingWeights(
+        VectorSimilarity: thresholdsOptions.RankingVectorSimilarityWeight,
+        Recency: thresholdsOptions.RankingRecencyWeight,
+        DomainMatch: thresholdsOptions.RankingDomainMatchWeight,
+        AccessFrequency: thresholdsOptions.RankingAccessFrequencyWeight);
+    var knowledgeClient = new KnowledgeClient(knowledgeGraphStore, rankingWeights);
 
     var askCommand = new AskCommand(
         reasoningEngine, protectionGate, knowledgeClient, host.Services.GetRequiredService<ILogger<AskCommand>>());

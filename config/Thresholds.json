@@ -9,5 +9,9 @@
   "diskCeilingMegabytes": 476000,
   "modelUsageCeilingTokens": 100000,
   "contextSizeCeilingTokens": 32000,
-  "backgroundTasksCeilingCount": 4
+  "backgroundTasksCeilingCount": 4,
+  "rankingVectorSimilarityWeight": 0.4,
+  "rankingRecencyWeight": 0.3,
+  "rankingDomainMatchWeight": 0.2,
+  "rankingAccessFrequencyWeight": 0.1
 }
