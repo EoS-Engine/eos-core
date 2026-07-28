@@ -15,6 +15,14 @@ public class ProtectionGateTests
             RiskScore: riskScore);
     }
 
+    private static readonly ResourceCeilings DefaultResourceCeilings = new(
+        CpuCeilingPercent: 90,
+        RamCeilingMegabytes: 8192,
+        DiskCeilingMegabytes: 476000,
+        ModelUsageCeilingTokens: 100000,
+        ContextSizeCeilingTokens: 32000,
+        BackgroundTasksCeilingCount: 4);
+
     private static ProtectionGate CreateGate(ILogger<ProtectionGate>? logger = null)
     {
         return new ProtectionGate(
@@ -22,6 +30,8 @@ public class ProtectionGateTests
             new RuleEngine(),
             new RiskEngine(),
             new ApprovalEngine(),
+            new EmergencyShutdownState(),
+            DefaultResourceCeilings,
             logger ?? new RecordingLogger());
     }
 
@@ -84,7 +94,9 @@ public class ProtectionGateTests
             projectPolicies: [],
             userPolicies: [],
             runtimePolicies: []);
-        var gate = new ProtectionGate(policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(), new RecordingLogger());
+        var gate = new ProtectionGate(
+            policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
+            new EmergencyShutdownState(), DefaultResourceCeilings, new RecordingLogger());
 
         var result = gate.Validate(CreateRequest(riskScore: 50));
 
@@ -101,7 +113,9 @@ public class ProtectionGateTests
             projectPolicies: [],
             userPolicies: [],
             runtimePolicies: []);
-        var gate = new ProtectionGate(policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(), new RecordingLogger());
+        var gate = new ProtectionGate(
+            policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
+            new EmergencyShutdownState(), DefaultResourceCeilings, new RecordingLogger());
         var request = CreateRequest(riskScore: 50);
 
         gate.Validate(request);

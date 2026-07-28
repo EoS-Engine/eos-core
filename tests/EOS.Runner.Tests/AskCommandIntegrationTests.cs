@@ -27,6 +27,8 @@ public class AskCommandIntegrationTests
         var reasoningEngine = new ReasoningEngine(aiProviderClient);
         var protectionGate = new ProtectionGate(
             new PolicyEngine([], [], [], []), new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
+            new EmergencyShutdownState(),
+            new ResourceCeilings(90, 8192, 476000, 100000, 32000, 4),
             NullLogger<ProtectionGate>.Instance);
 
         var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
@@ -52,6 +54,8 @@ public class AskCommandIntegrationTests
         var reasoningEngine = new ReasoningEngine(NeverCalledAIProviderClient.Instance);
         var protectionGate = new ProtectionGate(
             new PolicyEngine([], [], [], []), new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
+            new EmergencyShutdownState(),
+            new ResourceCeilings(90, 8192, 476000, 100000, 32000, 4),
             NullLogger<ProtectionGate>.Instance);
         var askCommand = new AskCommand(
             reasoningEngine, protectionGate, NeverCalledKnowledgeClient.Instance, NullLogger<AskCommand>.Instance);

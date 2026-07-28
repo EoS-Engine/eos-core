@@ -8,10 +8,19 @@ public sealed class ProtectionGate(
     RuleEngine ruleEngine,
     RiskEngine riskEngine,
     ApprovalEngine approvalEngine,
+    EmergencyShutdownState emergencyShutdownState,
+    ResourceCeilings resourceCeilings,
     ILogger<ProtectionGate> logger) : IProtectionClient
 {
     public ValidationResult Validate(ActionRequest action)
     {
+        var shutdownResult = emergencyShutdownState.TryHandleControlAction(action);
+        if (shutdownResult is not null)
+        {
+            Log(action, shutdownResult);
+            return shutdownResult;
+        }
+
         if (action.RiskScore is < 0 or > 100)
         {
             var invalid = new ValidationResult(
@@ -74,10 +83,15 @@ public sealed class ProtectionGate(
     {
         // §14.2 Full Pipeline (High tier only) — six steps, short-circuits on first denial (FR-P3).
         // Step 1 (Request Validation) already ran in Validate() before tier dispatch.
-        // Steps 2-5 (Context/Knowledge/Decision/Resource Validation): this WP's ActionRequest
-        // carries no ContextPayload/Explanation/Confidence/resource-budget data, and no real
-        // Scheduler budget infrastructure exists yet (Constitution Part 7) — each step passes
-        // absent the data it would otherwise check (WP-012 Implementation Plan).
+        // Steps 2-4 (Context/Knowledge/Decision Validation): this WP's ActionRequest carries no
+        // ContextPayload/Explanation/Confidence data — each step passes absent the data it would
+        // otherwise check (WP-012 Implementation Plan).
+        // Step 5 (Resource Validation): resourceCeilings is structurally wired (§16), but no
+        // ActionRequest carries a requested resource amount to compare against it yet — passes
+        // absent that data (WP-013 Architecture Challenge, G1/G4; real enforcement awaits
+        // Resource Management, WP-021). resourceCeilings is intentionally unused beyond this
+        // structural presence.
+        _ = resourceCeilings;
 
         // Step 6: Policy Validation.
         var policyDenial = CheckPolicy(action, RiskTier.High);
