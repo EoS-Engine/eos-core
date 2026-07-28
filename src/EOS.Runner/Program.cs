@@ -91,12 +91,12 @@ try
     var approvalEngine = new ApprovalEngine();
 
     var resourceCeilings = new ResourceCeilings(
-        thresholdsOptions.CpuCeilingPercent,
-        thresholdsOptions.RamCeilingMegabytes,
-        thresholdsOptions.DiskCeilingMegabytes,
-        thresholdsOptions.ModelUsageCeilingTokens,
-        thresholdsOptions.ContextSizeCeilingTokens,
-        thresholdsOptions.BackgroundTasksCeilingCount);
+        CpuCeilingPercent: thresholdsOptions.CpuCeilingPercent,
+        RamCeilingMegabytes: thresholdsOptions.RamCeilingMegabytes,
+        DiskCeilingMegabytes: thresholdsOptions.DiskCeilingMegabytes,
+        ModelUsageCeilingTokens: thresholdsOptions.ModelUsageCeilingTokens,
+        ContextSizeCeilingTokens: thresholdsOptions.ContextSizeCeilingTokens,
+        BackgroundTasksCeilingCount: thresholdsOptions.BackgroundTasksCeilingCount);
     var emergencyShutdownState = new EmergencyShutdownState();
 
     var protectionGate = new ProtectionGate(

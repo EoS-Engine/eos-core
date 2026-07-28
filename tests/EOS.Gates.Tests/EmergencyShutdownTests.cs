@@ -86,8 +86,10 @@ public class EmergencyShutdownTests
         Assert.Equal(ProtectionVerdict.Allow, activation.Verdict);
 
         var duringShutdownLow = gate.Validate(CreateRequest("TestAction", riskScore: 10));
+        var duringShutdownMedium = gate.Validate(CreateRequest("TestAction", riskScore: 50));
         var duringShutdownHigh = gate.Validate(CreateRequest("TestAction", riskScore: 90));
         Assert.Equal(ProtectionVerdict.Defer, duringShutdownLow.Verdict);
+        Assert.Equal(ProtectionVerdict.Defer, duringShutdownMedium.Verdict);
         Assert.Equal(ProtectionVerdict.Defer, duringShutdownHigh.Verdict);
 
         var clearing = gate.Validate(CreateRequest("EmergencyShutdownCleared", actor: "CTO"));
