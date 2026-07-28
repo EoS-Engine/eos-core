@@ -3,5 +3,11 @@
   "resourceCriticalPercent": 90,
   "providerFailureThreshold": 3,
   "providerRecoveryProbeIntervalSeconds": 30,
-  "inferenceTimeoutSeconds": 100
+  "inferenceTimeoutSeconds": 100,
+  "cpuCeilingPercent": 90,
+  "ramCeilingMegabytes": 8192,
+  "diskCeilingMegabytes": 476000,
+  "modelUsageCeilingTokens": 100000,
+  "contextSizeCeilingTokens": 32000,
+  "backgroundTasksCeilingCount": 4
 }

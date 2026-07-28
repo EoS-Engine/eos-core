@@ -90,11 +90,22 @@ try
     var riskEngine = new RiskEngine();
     var approvalEngine = new ApprovalEngine();
 
+    var resourceCeilings = new ResourceCeilings(
+        CpuCeilingPercent: thresholdsOptions.CpuCeilingPercent,
+        RamCeilingMegabytes: thresholdsOptions.RamCeilingMegabytes,
+        DiskCeilingMegabytes: thresholdsOptions.DiskCeilingMegabytes,
+        ModelUsageCeilingTokens: thresholdsOptions.ModelUsageCeilingTokens,
+        ContextSizeCeilingTokens: thresholdsOptions.ContextSizeCeilingTokens,
+        BackgroundTasksCeilingCount: thresholdsOptions.BackgroundTasksCeilingCount);
+    var emergencyShutdownState = new EmergencyShutdownState();
+
     var protectionGate = new ProtectionGate(
         policyEngine,
         ruleEngine,
         riskEngine,
         approvalEngine,
+        emergencyShutdownState,
+        resourceCeilings,
         host.Services.GetRequiredService<ILogger<ProtectionGate>>());
 
     var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
