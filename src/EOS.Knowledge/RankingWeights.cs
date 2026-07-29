@@ -2,13 +2,13 @@ namespace EOS.Knowledge;
 
 public sealed record RankingWeights(double VectorSimilarity, double Recency, double DomainMatch, double AccessFrequency)
 {
-    public double VectorSimilarity { get; init; } = Validate(VectorSimilarity, nameof(VectorSimilarity));
+    public double VectorSimilarity { get; } = Validate(VectorSimilarity, nameof(VectorSimilarity));
 
-    public double Recency { get; init; } = Validate(Recency, nameof(Recency));
+    public double Recency { get; } = Validate(Recency, nameof(Recency));
 
-    public double DomainMatch { get; init; } = Validate(DomainMatch, nameof(DomainMatch));
+    public double DomainMatch { get; } = Validate(DomainMatch, nameof(DomainMatch));
 
-    public double AccessFrequency { get; init; } = Validate(AccessFrequency, nameof(AccessFrequency));
+    public double AccessFrequency { get; } = Validate(AccessFrequency, nameof(AccessFrequency));
 
     private static double Validate(double value, string paramName)
     {
