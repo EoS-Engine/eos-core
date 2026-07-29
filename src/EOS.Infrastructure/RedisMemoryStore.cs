@@ -16,23 +16,23 @@ public sealed class RedisMemoryStore(string connectionString)
     public async Task SetAsync(
         string key, string value, TimeSpan? timeToLive, CancellationToken cancellationToken = default)
     {
-        await using var connection = await ConnectionMultiplexer.ConnectAsync(connectionString);
+        await using var connection = await ConnectionMultiplexer.ConnectAsync(connectionString).WaitAsync(cancellationToken);
         var database = connection.GetDatabase();
 
         if (timeToLive.HasValue)
         {
-            await database.StringSetAsync(key, value, timeToLive.Value);
+            await database.StringSetAsync(key, value, timeToLive.Value).WaitAsync(cancellationToken);
         }
         else
         {
-            await database.StringSetAsync(key, value);
+            await database.StringSetAsync(key, value).WaitAsync(cancellationToken);
         }
     }
 
     public async Task<string?> GetAsync(string key, CancellationToken cancellationToken = default)
     {
-        await using var connection = await ConnectionMultiplexer.ConnectAsync(connectionString);
-        var value = await connection.GetDatabase().StringGetAsync(key);
+        await using var connection = await ConnectionMultiplexer.ConnectAsync(connectionString).WaitAsync(cancellationToken);
+        var value = await connection.GetDatabase().StringGetAsync(key).WaitAsync(cancellationToken);
         return value.HasValue ? value.ToString() : null;
     }
 }

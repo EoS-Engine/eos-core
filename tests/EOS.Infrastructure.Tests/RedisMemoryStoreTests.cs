@@ -1,3 +1,5 @@
+using StackExchange.Redis;
+
 namespace EOS.Infrastructure.Tests;
 
 public class RedisMemoryStoreTests
@@ -26,10 +28,17 @@ public class RedisMemoryStoreTests
         var store = new RedisMemoryStore(_connectionString);
         var key = $"eos:wp014:roundtrip:{Guid.NewGuid()}";
 
-        await store.SetAsync(key, "hello", timeToLive: null);
-        var result = await store.GetAsync(key);
+        try
+        {
+            await store.SetAsync(key, "hello", timeToLive: null);
+            var result = await store.GetAsync(key);
 
-        Assert.Equal("hello", result);
+            Assert.Equal("hello", result);
+        }
+        finally
+        {
+            await DeleteKeyAsync(key);
+        }
     }
 
     [Fact]
@@ -37,13 +46,38 @@ public class RedisMemoryStoreTests
     {
         var store = new RedisMemoryStore(_connectionString);
         var key = $"eos:wp014:ttl:{Guid.NewGuid()}";
+        var ttl = TimeSpan.FromSeconds(2);
 
-        await store.SetAsync(key, "hello", TimeSpan.FromMilliseconds(50));
-        var beforeExpiry = await store.GetAsync(key);
-        await Task.Delay(TimeSpan.FromMilliseconds(300));
-        var afterExpiry = await store.GetAsync(key);
+        try
+        {
+            await store.SetAsync(key, "hello", ttl);
+            var beforeExpiry = await store.GetAsync(key);
 
-        Assert.Equal("hello", beforeExpiry);
-        Assert.Null(afterExpiry);
+            string? afterExpiry = null;
+            var deadline = DateTimeOffset.UtcNow + ttl + TimeSpan.FromSeconds(5);
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                afterExpiry = await store.GetAsync(key);
+                if (afterExpiry is null)
+                {
+                    break;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(200));
+            }
+
+            Assert.Equal("hello", beforeExpiry);
+            Assert.Null(afterExpiry);
+        }
+        finally
+        {
+            await DeleteKeyAsync(key);
+        }
+    }
+
+    private async Task DeleteKeyAsync(string key)
+    {
+        await using var connection = await ConnectionMultiplexer.ConnectAsync(_connectionString);
+        await connection.GetDatabase().KeyDeleteAsync(key);
     }
 }

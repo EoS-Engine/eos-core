@@ -99,6 +99,24 @@ public class KnowledgeClientQueryTests
         Assert.DoesNotContain(results, node => node.NodeId == nonMatchingId);
     }
 
+    [Fact]
+    public async Task QueryAsync_ThrowsArgumentException_ForProjectMemoryType_WhenDomainTagsAreNull()
+    {
+        var (_, client) = await CreateClientAsync();
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => client.QueryAsync(MemoryType.Project, null, null, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task QueryAsync_ThrowsArgumentException_ForProjectMemoryType_WhenDomainTagsAreEmpty()
+    {
+        var (_, client) = await CreateClientAsync();
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => client.QueryAsync(MemoryType.Project, [], null, CancellationToken.None));
+    }
+
     [Theory]
     [InlineData(MemoryType.Working)]
     [InlineData(MemoryType.ShortTerm)]

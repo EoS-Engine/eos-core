@@ -29,9 +29,13 @@
 
 ## Summary
 
-- **Complete:** 12 of 15 rows (Storage Strategy, symbolic retrieval, ranking formula, WP-007 prerequisite, `MemoryType`/`NodeType` mapping, ephemeral-type exclusion, ranking-weight placement, expected deliverables, acceptance criteria).
-- **Outside WP Scope:** 3 rows, all traced to the same single root cause documented in AG-0001 (vector-retrieval stage assigned to `ContextAssembler`/`assemble_context()`, WP-015): the vector half of "hybrid symbolic+vector Retrieval Strategy," the WP-011 embedding-channel prerequisite, and the ChromaDB portion of the seven-memory-type storage mapping.
-- **Deferred by Specification:** 2 rows (Context Assembly, Consolidation/Compression/Expiration) — both are roadmap-mandated exclusions from WP-014, correctly honored.
+The matrix contains 16 requirement rows in total:
+
+- **Complete:** 10 rows — "Implement the full seven memory-type Storage Strategy"; "hybrid symbolic+vector Retrieval Strategy" (symbolic half); "mechanical Retrieval Ranking formula"; Prerequisites "WP-007"; Included components "four-weight mechanical ranking formula"; Expected deliverables; Demo/acceptance criteria; `MemoryType`↔`KnowledgeNodeType` mapping; `query()`'s exclusion of ephemeral `MemoryType`s; Ranking-weight configuration placement.
+- **Outside WP Scope:** 2 rows — "hybrid symbolic+vector Retrieval Strategy" (vector half); Prerequisites "WP-011 (embedding channel)". Both trace to the same single root cause documented in AG-0001 (the vector-retrieval stage is assigned to `ContextAssembler`/`assemble_context()`, WP-015).
+- **Partially covered:** 1 row — Included components "the two-stage symbolic+vector retrieval algorithm" (symbolic stage Complete, vector stage Outside WP Scope) — the "Included components" wording restatement of the same AG-0001 root cause.
+- **Mixed (Complete / Not Applicable):** 1 row — Included components "All seven memory types... mapped to their Constitution Part 4 stores": Complete for the Redis and SQL Server rows; Not Applicable for the SQLite row (Mobile-domain, out of this roadmap's scope) and the ChromaDB row (Outside WP Scope, same AG-0001 root cause).
+- **Deferred by Specification:** 2 rows — Explicitly excluded "Context Assembly's budget/truncation logic (WP-015)"; Explicitly excluded "Consolidation/Compression/Expiration (WP-015/WP-016)". Both are roadmap-mandated exclusions from WP-014, correctly honored.
 - **No requirement in this matrix is classified Missing.**
 
 This matrix supersedes no prior document; it consolidates findings already established across the WP-014 Architecture Review, Architecture Challenge, Implementation Plan, and AG-0001 into a single per-requirement reference.

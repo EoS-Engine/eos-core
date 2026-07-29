@@ -38,6 +38,14 @@ public sealed class KnowledgeClient(KnowledgeGraphStore store, RankingWeights ra
         DateRange? range,
         CancellationToken cancellationToken = default)
     {
+        if (type is MemoryType.Project && domainTags is not { Length: > 0 })
+        {
+            throw new ArgumentException(
+                "Project memory is a domain_tags-filtered view (Memory-Management-Specification-v1.0 §10.6) " +
+                "and requires at least one domain tag.",
+                nameof(domainTags));
+        }
+
         var nodeTypes = ResolveNodeTypes(type);
 
         IReadOnlyList<KnowledgeNode> candidates =

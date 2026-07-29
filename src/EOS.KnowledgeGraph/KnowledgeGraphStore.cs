@@ -84,6 +84,11 @@ public sealed class KnowledgeGraphStore(string connectionString)
         DateTimeOffset? createdTo,
         CancellationToken cancellationToken)
     {
+        if (nodeTypes.Count == 0)
+        {
+            return [];
+        }
+
         await using var connection = new SqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
