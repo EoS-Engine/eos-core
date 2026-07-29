@@ -89,4 +89,16 @@ public class KnowledgeGraphStoreTests
 
         Assert.Null(result);
     }
+
+    [Fact]
+    public async Task QueryAsync_ReturnsEmpty_WhenNodeTypesIsEmpty()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        await store.UpsertAsync(CreateNode(Guid.NewGuid()), CancellationToken.None);
+
+        var results = await store.QueryAsync([], null, null, CancellationToken.None);
+
+        Assert.Empty(results);
+    }
 }

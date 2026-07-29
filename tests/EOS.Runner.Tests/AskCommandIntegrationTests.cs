@@ -34,7 +34,10 @@ public class AskCommandIntegrationTests
         var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
         var knowledgeGraphStore = new KnowledgeGraphStore(connectionOptions.SqlServerConnectionString);
         await knowledgeGraphStore.EnsureTableExistsAsync(CancellationToken.None);
-        var capturingKnowledgeClient = new CapturingKnowledgeClient(new KnowledgeClient(knowledgeGraphStore));
+        var rankingWeights = new RankingWeights(
+            VectorSimilarity: 0.4, Recency: 0.3, DomainMatch: 0.2, AccessFrequency: 0.1);
+        var capturingKnowledgeClient =
+            new CapturingKnowledgeClient(new KnowledgeClient(knowledgeGraphStore, rankingWeights));
 
         var askCommand = new AskCommand(reasoningEngine, protectionGate, capturingKnowledgeClient, NullLogger<AskCommand>.Instance);
 
@@ -85,6 +88,17 @@ public class AskCommandIntegrationTests
         {
             throw new InvalidOperationException("Should not be called for an empty/whitespace request.");
         }
+
+        public Task<IEnumerable<KnowledgeNode>> QueryAsync(
+            MemoryType? type, string[]? domainTags, DateRange? range, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Should not be called for an empty/whitespace request.");
+        }
+
+        public Task<IEnumerable<KnowledgeNode>> QuerySimilarAsync(Guid nodeId, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Should not be called for an empty/whitespace request.");
+        }
     }
 
     private sealed class CapturingKnowledgeClient(IKnowledgeClient inner) : IKnowledgeClient
@@ -97,6 +111,17 @@ public class AskCommandIntegrationTests
         {
             LastUpdatedNodeId = nodeId;
             return inner.UpdateAsync(nodeId, nodeType, content, domainTags, evidenceRefs, cancellationToken);
+        }
+
+        public Task<IEnumerable<KnowledgeNode>> QueryAsync(
+            MemoryType? type, string[]? domainTags, DateRange? range, CancellationToken cancellationToken = default)
+        {
+            return inner.QueryAsync(type, domainTags, range, cancellationToken);
+        }
+
+        public Task<IEnumerable<KnowledgeNode>> QuerySimilarAsync(Guid nodeId, CancellationToken cancellationToken = default)
+        {
+            return inner.QuerySimilarAsync(nodeId, cancellationToken);
         }
     }
 }

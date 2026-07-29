@@ -38,4 +38,18 @@ public sealed record ThresholdsOptions
 
     [Range(1, int.MaxValue)]
     public required int BackgroundTasksCeilingCount { get; init; }
+
+    // Memory Retrieval Ranking weights (Memory-Management-Specification-v1.0 §19.1). The
+    // specification names Thresholds.json explicitly as their configuration home.
+    [Range(0.0, 1.0)]
+    public required double RankingVectorSimilarityWeight { get; init; }
+
+    [Range(0.0, 1.0)]
+    public required double RankingRecencyWeight { get; init; }
+
+    [Range(0.0, 1.0)]
+    public required double RankingDomainMatchWeight { get; init; }
+
+    [Range(0.0, 1.0)]
+    public required double RankingAccessFrequencyWeight { get; init; }
 }
