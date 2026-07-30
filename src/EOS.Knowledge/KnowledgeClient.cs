@@ -2,7 +2,10 @@ using EOS.KnowledgeGraph;
 
 namespace EOS.Knowledge;
 
-public sealed class KnowledgeClient(KnowledgeGraphStore store, RankingWeights rankingWeights) : IKnowledgeClient
+public sealed class KnowledgeClient(
+    KnowledgeGraphStore store,
+    RankingWeights rankingWeights,
+    IContextAssemblyEventPublisher? contextAssemblyEventPublisher = null) : IKnowledgeClient
 {
     private static readonly IReadOnlyList<KnowledgeNodeType> AllNodeTypes =
     [
@@ -80,6 +83,7 @@ public sealed class KnowledgeClient(KnowledgeGraphStore store, RankingWeights ra
     public async Task<ContextPayload> AssembleContextAsync(
         ContextRequest request, CancellationToken cancellationToken = default)
     {
+        var requestId = Guid.NewGuid();
         var nodeTypes = new List<KnowledgeNodeType>();
         if (request.IncludesEpisodic)
         {
@@ -119,7 +123,11 @@ public sealed class KnowledgeClient(KnowledgeGraphStore store, RankingWeights ra
             runningSize += itemSize;
         }
 
-        return new ContextPayload(assembled, Truncated: assembled.Count < ranked.Count);
+        var payload = new ContextPayload(assembled, Truncated: assembled.Count < ranked.Count);
+
+        contextAssemblyEventPublisher?.PublishContextAssembled(requestId, payload.Items.Count, payload.Truncated);
+
+        return payload;
     }
 
     private static IReadOnlyList<KnowledgeNodeType> ResolveNodeTypes(MemoryType? type)

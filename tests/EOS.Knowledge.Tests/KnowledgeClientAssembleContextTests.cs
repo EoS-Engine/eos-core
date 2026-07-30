@@ -174,4 +174,51 @@ public class KnowledgeClientAssembleContextTests
         Assert.Empty(payload.Items);
         Assert.True(payload.Truncated);
     }
+
+    [Fact]
+    public async Task AssembleContextAsync_PublishesContextAssembled_WithMatchingPayload()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var isolationTag = $"test-scope-{Guid.NewGuid()}";
+        await store.UpsertAsync(
+            new KnowledgeNode(Guid.NewGuid(), KnowledgeNodeType.Fact, "content", [isolationTag], [], DateTimeOffset.UtcNow),
+            CancellationToken.None);
+        var publisher = new CapturingContextAssemblyEventPublisher();
+        var client = new KnowledgeClient(store, DefaultRankingWeights, publisher);
+        var request = CreateRequest(includesEpisodic: false, includesSemantic: true, projectScope: [isolationTag]);
+
+        var payload = await client.AssembleContextAsync(request, CancellationToken.None);
+
+        Assert.NotNull(publisher.LastRequestId);
+        Assert.Equal(payload.Items.Count, publisher.LastItemCount);
+        Assert.Equal(payload.Truncated, publisher.LastTruncated);
+    }
+
+    [Fact]
+    public async Task AssembleContextAsync_DoesNotThrow_WhenNoPublisherIsSupplied()
+    {
+        var (_, client) = await CreateClientAsync();
+        var request = CreateRequest(includesEpisodic: false, includesSemantic: false);
+
+        var payload = await client.AssembleContextAsync(request, CancellationToken.None);
+
+        Assert.Empty(payload.Items);
+    }
+
+    private sealed class CapturingContextAssemblyEventPublisher : IContextAssemblyEventPublisher
+    {
+        public Guid? LastRequestId { get; private set; }
+
+        public int? LastItemCount { get; private set; }
+
+        public bool? LastTruncated { get; private set; }
+
+        public void PublishContextAssembled(Guid requestId, int itemCount, bool truncated)
+        {
+            LastRequestId = requestId;
+            LastItemCount = itemCount;
+            LastTruncated = truncated;
+        }
+    }
 }
