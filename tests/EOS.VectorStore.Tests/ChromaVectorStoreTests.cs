@@ -14,7 +14,10 @@ public class ChromaVectorStoreTests
     {
         var store = new ChromaVectorStore(ChromaDbEndpoint);
         var id = Guid.NewGuid();
-        var embedding = new float[] { 0.1f, 0.2f, 0.3f };
+        // 768 dimensions to match the real embedding channel's output shape (nomic-embed-text,
+        // per EmbeddingGeneratorIntegrationTests) - the collection's dimension is fixed by
+        // ChromaDB on first write, and this store's collection name is shared with production.
+        var embedding = Enumerable.Repeat(0.1f, 768).ToArray();
 
         await store.IndexAsync(id, embedding, CancellationToken.None);
 

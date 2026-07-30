@@ -135,8 +135,11 @@ public class KnowledgeClientConsolidateAsyncTests
 
     private sealed class FixedEmbeddingGenerator : IEmbeddingGenerator
     {
+        // 768 dimensions to match the real embedding channel's output shape (nomic-embed-text) -
+        // ChromaVectorStore's collection name is shared with production, and ChromaDB fixes a
+        // collection's dimension on first write.
         public Task<IReadOnlyList<float>> EmbedAsync(string content, CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<float>>([0.1f, 0.2f, 0.3f]);
+            Task.FromResult<IReadOnlyList<float>>(Enumerable.Repeat(0.1f, 768).ToArray());
     }
 
     private sealed class CapturingLessonLearnedEventPublisher : ILessonLearnedEventPublisher

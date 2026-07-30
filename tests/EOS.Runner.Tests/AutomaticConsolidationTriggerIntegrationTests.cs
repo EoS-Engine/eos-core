@@ -36,11 +36,10 @@ public class AutomaticConsolidationTriggerIntegrationTests
             lessonLearnedEventPublisher: lessonLearnedPublisher);
         var eventMediator = new EventMediator();
 
-        // Registers the exact same production handler Program.cs registers for this signal -
-        // not a copy of its logic. A regression in AutomaticConsolidationTriggerHandlers itself
-        // (e.g. swapping suppressLessonLearned true/false) would be caught by this test.
-        eventMediator.Subscribe<GateFailureConsolidationSignal>(
-            envelope => AutomaticConsolidationTriggerHandlers.HandleGateFailureSignal(envelope, client));
+        // Calls the exact same registration Program.cs performs - not a copy of it. A regression
+        // in either the handler bodies or which handler is wired to which signal type would be
+        // caught by this test.
+        AutomaticConsolidationTriggerHandlers.RegisterSubscriptions(eventMediator, client);
 
         eventMediator.Publish(EventEnvelope<GateFailureConsolidationSignal>.Create(
             eventType: "GateFailureConsolidationSignal",
@@ -71,8 +70,7 @@ public class AutomaticConsolidationTriggerIntegrationTests
             lessonLearnedEventPublisher: lessonLearnedPublisher);
         var eventMediator = new EventMediator();
 
-        eventMediator.Subscribe<IncidentResolvedConsolidationSignal>(
-            envelope => AutomaticConsolidationTriggerHandlers.HandleIncidentResolvedSignal(envelope, client));
+        AutomaticConsolidationTriggerHandlers.RegisterSubscriptions(eventMediator, client);
 
         eventMediator.Publish(EventEnvelope<IncidentResolvedConsolidationSignal>.Create(
             eventType: "IncidentResolvedConsolidationSignal",

@@ -133,11 +133,7 @@ try
         new EventMediatorLessonLearnedEventPublisher(eventMediator),
         new EventMediatorMemoryConsolidatedEventPublisher(eventMediator));
 
-    eventMediator.Subscribe<GateFailureConsolidationSignal>(
-        envelope => AutomaticConsolidationTriggerHandlers.HandleGateFailureSignal(envelope, knowledgeClient));
-
-    eventMediator.Subscribe<IncidentResolvedConsolidationSignal>(
-        envelope => AutomaticConsolidationTriggerHandlers.HandleIncidentResolvedSignal(envelope, knowledgeClient));
+    AutomaticConsolidationTriggerHandlers.RegisterSubscriptions(eventMediator, knowledgeClient);
 
     var askCommand = new AskCommand(
         reasoningEngine, protectionGate, knowledgeClient, host.Services.GetRequiredService<ILogger<AskCommand>>());
@@ -252,6 +248,20 @@ public sealed record IncidentResolvedConsolidationSignal(
 /// </summary>
 public static class AutomaticConsolidationTriggerHandlers
 {
+    /// <summary>
+    /// The exact registration `Program.cs` performs — extracted so a test can invoke this same
+    /// registration path (mapping each signal type to its handler) rather than re-declaring its
+    /// own parallel `Subscribe` calls, which would not catch a wrong or missing mapping here.
+    /// </summary>
+    public static void RegisterSubscriptions(EventMediator eventMediator, IKnowledgeClient knowledgeClient)
+    {
+        eventMediator.Subscribe<GateFailureConsolidationSignal>(
+            envelope => HandleGateFailureSignal(envelope, knowledgeClient));
+
+        eventMediator.Subscribe<IncidentResolvedConsolidationSignal>(
+            envelope => HandleIncidentResolvedSignal(envelope, knowledgeClient));
+    }
+
     public static void HandleGateFailureSignal(
         EventEnvelope<GateFailureConsolidationSignal> envelope, IKnowledgeClient knowledgeClient)
     {
