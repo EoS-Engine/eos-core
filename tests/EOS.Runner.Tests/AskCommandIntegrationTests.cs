@@ -99,6 +99,11 @@ public class AskCommandIntegrationTests
         {
             throw new InvalidOperationException("Should not be called for an empty/whitespace request.");
         }
+
+        public Task<ContextPayload> AssembleContextAsync(ContextRequest request, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Should not be called for an empty/whitespace request.");
+        }
     }
 
     private sealed class CapturingKnowledgeClient(IKnowledgeClient inner) : IKnowledgeClient
@@ -122,6 +127,11 @@ public class AskCommandIntegrationTests
         public Task<IEnumerable<KnowledgeNode>> QuerySimilarAsync(Guid nodeId, CancellationToken cancellationToken = default)
         {
             return inner.QuerySimilarAsync(nodeId, cancellationToken);
+        }
+
+        public Task<ContextPayload> AssembleContextAsync(ContextRequest request, CancellationToken cancellationToken = default)
+        {
+            return inner.AssembleContextAsync(request, cancellationToken);
         }
     }
 }

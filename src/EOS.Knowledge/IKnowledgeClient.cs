@@ -49,4 +49,17 @@ public interface IKnowledgeClient
     /// </exception>
     Task<IEnumerable<KnowledgeNode>> QuerySimilarAsync(
         Guid nodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Memory-Management-Specification-v1.0 §15.1/§15.2/§20.1's budgeted, ranked context
+    /// composition. Per ADR-015-005, this is symbolic-only this WP: <see
+    /// cref="ContextRequest.IncludesEpisodic"/>/<see cref="ContextRequest.IncludesSemantic"/>
+    /// are honored via <c>KnowledgeGraphStore</c>; <see cref="ContextRequest.IncludesWorking"/>/
+    /// <see cref="ContextRequest.IncludesShortTerm"/> are structurally present but intentionally
+    /// inert, since <c>KnowledgeClient</c> has no legal dependency path to
+    /// <c>RedisMemoryStore</c> (<c>EOS.Infrastructure</c>). §15.2's truncation transparency is
+    /// honored: <see cref="ContextPayload.Truncated"/> is always populated truthfully.
+    /// </summary>
+    Task<ContextPayload> AssembleContextAsync(
+        ContextRequest request, CancellationToken cancellationToken = default);
 }

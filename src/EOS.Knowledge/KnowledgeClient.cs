@@ -77,6 +77,51 @@ public sealed class KnowledgeClient(KnowledgeGraphStore store, RankingWeights ra
         return RetrievalRanking.Rank(candidates, rankingWeights, node.DomainTags);
     }
 
+    public async Task<ContextPayload> AssembleContextAsync(
+        ContextRequest request, CancellationToken cancellationToken = default)
+    {
+        var nodeTypes = new List<KnowledgeNodeType>();
+        if (request.IncludesEpisodic)
+        {
+            nodeTypes.Add(KnowledgeNodeType.Lesson);
+        }
+
+        if (request.IncludesSemantic)
+        {
+            nodeTypes.Add(KnowledgeNodeType.Fact);
+            nodeTypes.Add(KnowledgeNodeType.Pattern);
+        }
+
+        IReadOnlyList<KnowledgeNode> candidates = nodeTypes.Count == 0
+            ? []
+            : await store.QueryAsync(nodeTypes, request.Filters?.From, request.Filters?.To, cancellationToken);
+
+        if (request.ProjectScope is { Length: > 0 })
+        {
+            candidates = candidates
+                .Where(node => node.DomainTags.Intersect(request.ProjectScope).Any())
+                .ToList();
+        }
+
+        var ranked = RetrievalRanking.Rank(candidates, rankingWeights, request.ProjectScope);
+
+        var assembled = new List<KnowledgeNode>();
+        var runningSize = 0;
+        foreach (var item in ranked)
+        {
+            var itemSize = item.Content.Length;
+            if (runningSize + itemSize > request.TokenOrSizeBudget)
+            {
+                break;
+            }
+
+            assembled.Add(item);
+            runningSize += itemSize;
+        }
+
+        return new ContextPayload(assembled, Truncated: assembled.Count < ranked.Count);
+    }
+
     private static IReadOnlyList<KnowledgeNodeType> ResolveNodeTypes(MemoryType? type)
     {
         return type switch
