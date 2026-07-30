@@ -1,8 +1,10 @@
 using EOS.AIProvider;
 using EOS.Gates;
 using EOS.Infrastructure;
+using EOS.Contracts;
 using EOS.Knowledge;
 using EOS.KnowledgeGraph;
+using EOS.Orchestrator;
 using EOS.Reasoning;
 using EOS.Runner.Bootstrap;
 using EOS.Runner.Commands;
@@ -116,7 +118,9 @@ try
         Recency: thresholdsOptions.RankingRecencyWeight,
         DomainMatch: thresholdsOptions.RankingDomainMatchWeight,
         AccessFrequency: thresholdsOptions.RankingAccessFrequencyWeight);
-    var knowledgeClient = new KnowledgeClient(knowledgeGraphStore, rankingWeights);
+    var eventMediator = new EventMediator();
+    var knowledgeClient = new KnowledgeClient(
+        knowledgeGraphStore, rankingWeights, new EventMediatorContextAssemblyEventPublisher(eventMediator));
 
     var askCommand = new AskCommand(
         reasoningEngine, protectionGate, knowledgeClient, host.Services.GetRequiredService<ILogger<AskCommand>>());
@@ -136,4 +140,18 @@ internal sealed class LoggerProviderEventLogger(ILogger logger) : IProviderEvent
     public void LogEvent(string message) => logger.LogInformation("{Message}", message);
 
     public void LogWarning(string message) => logger.LogWarning("{Message}", message);
+}
+
+internal sealed record ContextAssembledPayload(Guid RequestId, int ItemCount, bool Truncated);
+
+internal sealed class EventMediatorContextAssemblyEventPublisher(EventMediator eventMediator) : IContextAssemblyEventPublisher
+{
+    public void PublishContextAssembled(Guid requestId, int itemCount, bool truncated)
+    {
+        eventMediator.Publish(EventEnvelope<ContextAssembledPayload>.Create(
+            eventType: "ContextAssembled",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new ContextAssembledPayload(requestId, itemCount, truncated)));
+    }
 }
