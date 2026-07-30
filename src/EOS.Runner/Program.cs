@@ -10,6 +10,7 @@ using EOS.Runner.Bootstrap;
 using EOS.Runner.Commands;
 using EOS.SDK;
 using EOS.SharedKernel.Configuration;
+using EOS.VectorStore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -81,6 +82,7 @@ try
         new LoggerProviderEventLogger(host.Services.GetRequiredService<ILogger<AIProviderManager>>()),
         providerRegistry: providerRegistry);
     var reasoningEngine = new ReasoningEngine(aiProviderClient);
+    var embeddingGenerator = new AIProviderEmbeddingGenerator(aiProviderClient);
 
     var securityOptions = loader.Load<SecurityOptions>("Security.json");
     var policyEngine = new PolicyEngine(
@@ -119,8 +121,16 @@ try
         DomainMatch: thresholdsOptions.RankingDomainMatchWeight,
         AccessFrequency: thresholdsOptions.RankingAccessFrequencyWeight);
     var eventMediator = new EventMediator();
+    var redisMemoryStore = new RedisMemoryStore(connectionOptions.RedisConnectionString);
+    var vectorStore = new ChromaVectorStore(connectionOptions.ChromaDbEndpoint);
     var knowledgeClient = new KnowledgeClient(
-        knowledgeGraphStore, rankingWeights, new EventMediatorContextAssemblyEventPublisher(eventMediator));
+        knowledgeGraphStore,
+        rankingWeights,
+        vectorStore,
+        new RedisMemorySourceStore(redisMemoryStore),
+        new EventMediatorContextAssemblyEventPublisher(eventMediator),
+        embeddingGenerator,
+        new EventMediatorLessonLearnedEventPublisher(eventMediator));
 
     var askCommand = new AskCommand(
         reasoningEngine, protectionGate, knowledgeClient, host.Services.GetRequiredService<ILogger<AskCommand>>());
@@ -162,5 +172,33 @@ internal sealed class EventMediatorContextAssemblyEventPublisher(EventMediator e
             version: "v1",
             producer: "EOS.Knowledge",
             payload: new ContextAssembledPayload(requestId, itemCount, truncated)));
+    }
+}
+
+internal sealed class RedisMemorySourceStore(RedisMemoryStore redisMemoryStore) : IMemorySourceStore
+{
+    public Task<string?> GetContentAsync(MemoryRef source, CancellationToken cancellationToken = default) =>
+        redisMemoryStore.GetAsync(source.Key, cancellationToken);
+
+    public async Task<bool> IsConsolidatedAsync(MemoryRef source, CancellationToken cancellationToken = default) =>
+        await redisMemoryStore.GetAsync(ConsolidatedMarkerKey(source), cancellationToken) is not null;
+
+    public Task MarkConsolidatedAsync(MemoryRef source, CancellationToken cancellationToken = default) =>
+        redisMemoryStore.SetAsync(ConsolidatedMarkerKey(source), "true", null, cancellationToken);
+
+    private static string ConsolidatedMarkerKey(MemoryRef source) => $"{source.Key}:consolidated";
+}
+
+internal sealed record LessonLearnedPayload(Guid EpisodicEntryId, string Source);
+
+internal sealed class EventMediatorLessonLearnedEventPublisher(EventMediator eventMediator) : ILessonLearnedEventPublisher
+{
+    public void PublishLessonLearned(Guid episodicEntryId, string source)
+    {
+        eventMediator.Publish(EventEnvelope<LessonLearnedPayload>.Create(
+            eventType: "LessonLearned",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new LessonLearnedPayload(episodicEntryId, source)));
     }
 }

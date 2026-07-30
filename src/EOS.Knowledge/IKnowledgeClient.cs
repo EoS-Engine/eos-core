@@ -62,4 +62,24 @@ public interface IKnowledgeClient
     /// </summary>
     Task<ContextPayload> AssembleContextAsync(
         ContextRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Memory-Management-Specification-v1.0 §16.2/§20.1's consolidation algorithm: promotes
+    /// ephemeral memory (Working/Short-term/Session, dereferenced via <paramref name="source"/>
+    /// per ADR-015-004) into a persistent Episodic <see cref="KnowledgeNode"/>, indexes its
+    /// embedding (best-effort — §25: "indexing deferred and retried" if unavailable, never
+    /// blocking the graph write), and emits <c>LessonLearned</c> per ADR-015-002's
+    /// trigger-dependent rule. <paramref name="suppressLessonLearned"/> is <see langword="true"/>
+    /// only for the Gate-failure trigger (§16.1), where <c>EOS.Gates</c> has already emitted
+    /// <c>LessonLearned</c> per Constitution §0.8.3 — ADR-015-002 requires this call not
+    /// re-emit it. Idempotent per §25/§20.1's precondition: a already-consolidated
+    /// <paramref name="source"/> is a no-op (returns <see cref="Guid.Empty"/>) with a warning
+    /// log, never an error.
+    /// </summary>
+    Task<Guid> ConsolidateAsync(
+        MemoryRef source,
+        string reason,
+        string[] evidenceRefs,
+        bool suppressLessonLearned = false,
+        CancellationToken cancellationToken = default);
 }

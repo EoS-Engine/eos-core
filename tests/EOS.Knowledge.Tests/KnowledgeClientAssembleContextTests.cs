@@ -1,4 +1,5 @@
 using EOS.KnowledgeGraph;
+using EOS.VectorStore;
 
 namespace EOS.Knowledge.Tests;
 
@@ -11,11 +12,16 @@ public class KnowledgeClientAssembleContextTests
         Environment.GetEnvironmentVariable("EOS_SQLSERVER_CONNECTION_STRING")
         ?? throw new InvalidOperationException("EOS_SQLSERVER_CONNECTION_STRING is not set.");
 
+    private static string ChromaDbEndpoint =>
+        Environment.GetEnvironmentVariable("EOS_CHROMADB_ENDPOINT")
+        ?? throw new InvalidOperationException("EOS_CHROMADB_ENDPOINT is not set.");
+
     private static async Task<(KnowledgeGraphStore Store, IKnowledgeClient Client)> CreateClientAsync()
     {
         var store = new KnowledgeGraphStore(ConnectionString);
         await store.EnsureTableExistsAsync(CancellationToken.None);
-        return (store, new KnowledgeClient(store, DefaultRankingWeights));
+        return (store, new KnowledgeClient(
+            store, DefaultRankingWeights, new ChromaVectorStore(ChromaDbEndpoint), NeverCalledMemorySourceStore.Instance));
     }
 
     private static ContextRequest CreateRequest(
@@ -185,7 +191,12 @@ public class KnowledgeClientAssembleContextTests
             new KnowledgeNode(Guid.NewGuid(), KnowledgeNodeType.Fact, "content", [isolationTag], [], DateTimeOffset.UtcNow),
             CancellationToken.None);
         var publisher = new CapturingContextAssemblyEventPublisher();
-        var client = new KnowledgeClient(store, DefaultRankingWeights, publisher);
+        var client = new KnowledgeClient(
+            store,
+            DefaultRankingWeights,
+            new ChromaVectorStore(ChromaDbEndpoint),
+            NeverCalledMemorySourceStore.Instance,
+            publisher);
         var request = CreateRequest(includesEpisodic: false, includesSemantic: true, projectScope: [isolationTag]);
 
         var payload = await client.AssembleContextAsync(request, CancellationToken.None);

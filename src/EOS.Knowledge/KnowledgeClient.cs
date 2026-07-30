@@ -1,11 +1,16 @@
 using EOS.KnowledgeGraph;
+using EOS.VectorStore;
 
 namespace EOS.Knowledge;
 
 public sealed class KnowledgeClient(
     KnowledgeGraphStore store,
     RankingWeights rankingWeights,
-    IContextAssemblyEventPublisher? contextAssemblyEventPublisher = null) : IKnowledgeClient
+    ChromaVectorStore vectorStore,
+    IMemorySourceStore memorySourceStore,
+    IContextAssemblyEventPublisher? contextAssemblyEventPublisher = null,
+    IEmbeddingGenerator? embeddingGenerator = null,
+    ILessonLearnedEventPublisher? lessonLearnedEventPublisher = null) : IKnowledgeClient
 {
     private static readonly IReadOnlyList<KnowledgeNodeType> AllNodeTypes =
     [
@@ -128,6 +133,51 @@ public sealed class KnowledgeClient(
         contextAssemblyEventPublisher?.PublishContextAssembled(requestId, payload.Items.Count, payload.Truncated);
 
         return payload;
+    }
+
+    public async Task<Guid> ConsolidateAsync(
+        MemoryRef source,
+        string reason,
+        string[] evidenceRefs,
+        bool suppressLessonLearned = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (await memorySourceStore.IsConsolidatedAsync(source, cancellationToken))
+        {
+            Console.Error.WriteLine(
+                $"ConsolidateAsync: '{source.Key}' ({source.Type}) is already consolidated; " +
+                "no-op (Memory-Management-Specification-v1.0 §25).");
+            return Guid.Empty;
+        }
+
+        var content = await memorySourceStore.GetContentAsync(source, cancellationToken)
+            ?? throw new ArgumentException(
+                $"'{source.Key}' ({source.Type}) does not resolve to existing content.", nameof(source));
+
+        var episodicEntryId = Guid.NewGuid();
+        var episodicNode = new KnowledgeNode(
+            NodeId: episodicEntryId,
+            NodeType: KnowledgeNodeType.Lesson,
+            Content: content,
+            DomainTags: [],
+            EvidenceRefs: evidenceRefs,
+            CreatedAt: DateTimeOffset.UtcNow);
+        await store.UpsertAsync(episodicNode, cancellationToken);
+
+        if (embeddingGenerator is not null)
+        {
+            var embedding = await embeddingGenerator.EmbedAsync(content, cancellationToken);
+            await vectorStore.IndexAsync(episodicEntryId, embedding, cancellationToken);
+        }
+
+        if (!suppressLessonLearned)
+        {
+            lessonLearnedEventPublisher?.PublishLessonLearned(episodicEntryId, source.Key);
+        }
+
+        await memorySourceStore.MarkConsolidatedAsync(source, cancellationToken);
+
+        return episodicEntryId;
     }
 
     private static IReadOnlyList<KnowledgeNodeType> ResolveNodeTypes(MemoryType? type)

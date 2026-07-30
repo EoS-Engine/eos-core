@@ -7,6 +7,7 @@ using EOS.Reasoning;
 using EOS.Runner.Bootstrap;
 using EOS.Runner.Commands;
 using EOS.SharedKernel.Configuration;
+using EOS.VectorStore;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace EOS.Runner.Tests;
@@ -37,7 +38,11 @@ public class AskCommandIntegrationTests
         var rankingWeights = new RankingWeights(
             VectorSimilarity: 0.4, Recency: 0.3, DomainMatch: 0.2, AccessFrequency: 0.1);
         var capturingKnowledgeClient =
-            new CapturingKnowledgeClient(new KnowledgeClient(knowledgeGraphStore, rankingWeights));
+            new CapturingKnowledgeClient(new KnowledgeClient(
+                knowledgeGraphStore,
+                rankingWeights,
+                new ChromaVectorStore(connectionOptions.ChromaDbEndpoint),
+                NeverCalledMemorySourceStore.Instance));
 
         var askCommand = new AskCommand(reasoningEngine, protectionGate, capturingKnowledgeClient, NullLogger<AskCommand>.Instance);
 
@@ -104,6 +109,33 @@ public class AskCommandIntegrationTests
         {
             throw new InvalidOperationException("Should not be called for an empty/whitespace request.");
         }
+
+        public Task<Guid> ConsolidateAsync(
+            MemoryRef source, string reason, string[] evidenceRefs, bool suppressLessonLearned = false,
+            CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Should not be called for an empty/whitespace request.");
+        }
+    }
+
+    private sealed class NeverCalledMemorySourceStore : IMemorySourceStore
+    {
+        public static readonly NeverCalledMemorySourceStore Instance = new();
+
+        public Task<string?> GetContentAsync(MemoryRef source, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Should not be called by this test.");
+        }
+
+        public Task<bool> IsConsolidatedAsync(MemoryRef source, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Should not be called by this test.");
+        }
+
+        public Task MarkConsolidatedAsync(MemoryRef source, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Should not be called by this test.");
+        }
     }
 
     private sealed class CapturingKnowledgeClient(IKnowledgeClient inner) : IKnowledgeClient
@@ -132,6 +164,13 @@ public class AskCommandIntegrationTests
         public Task<ContextPayload> AssembleContextAsync(ContextRequest request, CancellationToken cancellationToken = default)
         {
             return inner.AssembleContextAsync(request, cancellationToken);
+        }
+
+        public Task<Guid> ConsolidateAsync(
+            MemoryRef source, string reason, string[] evidenceRefs, bool suppressLessonLearned = false,
+            CancellationToken cancellationToken = default)
+        {
+            return inner.ConsolidateAsync(source, reason, evidenceRefs, suppressLessonLearned, cancellationToken);
         }
     }
 }
