@@ -142,6 +142,15 @@ internal sealed class LoggerProviderEventLogger(ILogger logger) : IProviderEvent
     public void LogWarning(string message) => logger.LogWarning("{Message}", message);
 }
 
+internal sealed class AIProviderEmbeddingGenerator(IEmbeddingProviderClient embeddingProviderClient) : IEmbeddingGenerator
+{
+    public async Task<IReadOnlyList<float>> EmbedAsync(string content, CancellationToken cancellationToken = default)
+    {
+        var vector = await embeddingProviderClient.EmbedAsync(content, cancellationToken);
+        return vector.Values;
+    }
+}
+
 internal sealed record ContextAssembledPayload(Guid RequestId, int ItemCount, bool Truncated);
 
 internal sealed class EventMediatorContextAssemblyEventPublisher(EventMediator eventMediator) : IContextAssemblyEventPublisher
