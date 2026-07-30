@@ -133,25 +133,11 @@ try
         new EventMediatorLessonLearnedEventPublisher(eventMediator),
         new EventMediatorMemoryConsolidatedEventPublisher(eventMediator));
 
-    eventMediator.Subscribe<GateFailureConsolidationSignal>(envelope =>
-    {
-        var payload = envelope.Payload;
-        knowledgeClient.ConsolidateAsync(
-            new MemoryRef(payload.SourceMemoryType, payload.SourceKey),
-            payload.Reason,
-            payload.EvidenceRefs,
-            suppressLessonLearned: true).GetAwaiter().GetResult();
-    });
+    eventMediator.Subscribe<GateFailureConsolidationSignal>(
+        envelope => AutomaticConsolidationTriggerHandlers.HandleGateFailureSignal(envelope, knowledgeClient));
 
-    eventMediator.Subscribe<IncidentResolvedConsolidationSignal>(envelope =>
-    {
-        var payload = envelope.Payload;
-        knowledgeClient.ConsolidateAsync(
-            new MemoryRef(payload.SourceMemoryType, payload.SourceKey),
-            payload.Reason,
-            payload.EvidenceRefs,
-            suppressLessonLearned: false).GetAwaiter().GetResult();
-    });
+    eventMediator.Subscribe<IncidentResolvedConsolidationSignal>(
+        envelope => AutomaticConsolidationTriggerHandlers.HandleIncidentResolvedSignal(envelope, knowledgeClient));
 
     var askCommand = new AskCommand(
         reasoningEngine, protectionGate, knowledgeClient, host.Services.GetRequiredService<ILogger<AskCommand>>());
@@ -245,7 +231,7 @@ internal sealed class EventMediatorMemoryConsolidatedEventPublisher(EventMediato
 /// <c>suppressLessonLearned: true</c>, since <c>EOS.Gates</c> has already emitted
 /// <c>LessonLearned</c> per Constitution §0.8.3 (ADR-015-002).
 /// </summary>
-internal sealed record GateFailureConsolidationSignal(
+public sealed record GateFailureConsolidationSignal(
     MemoryType SourceMemoryType, string SourceKey, string Reason, string[] EvidenceRefs);
 
 /// <summary>
@@ -254,5 +240,37 @@ internal sealed record GateFailureConsolidationSignal(
 /// <see cref="IKnowledgeClient.ConsolidateAsync"/> with real <c>LessonLearned</c> emission
 /// (ADR-015-002).
 /// </summary>
-internal sealed record IncidentResolvedConsolidationSignal(
+public sealed record IncidentResolvedConsolidationSignal(
     MemoryType SourceMemoryType, string SourceKey, string Reason, string[] EvidenceRefs);
+
+/// <summary>
+/// The two automatic-trigger <c>EventMediator</c> handlers (ADR-015-003), extracted to named,
+/// externally-callable methods so a test can invoke the exact production logic rather than a
+/// duplicated copy of it. <c>public</c> solely to make this possible from
+/// <c>EOS.Runner.Tests</c> — not a new architectural layer, just the same two handler bodies
+/// that were previously inline lambdas in <c>Program.cs</c>.
+/// </summary>
+public static class AutomaticConsolidationTriggerHandlers
+{
+    public static void HandleGateFailureSignal(
+        EventEnvelope<GateFailureConsolidationSignal> envelope, IKnowledgeClient knowledgeClient)
+    {
+        var payload = envelope.Payload;
+        knowledgeClient.ConsolidateAsync(
+            new MemoryRef(payload.SourceMemoryType, payload.SourceKey),
+            payload.Reason,
+            payload.EvidenceRefs,
+            suppressLessonLearned: true).GetAwaiter().GetResult();
+    }
+
+    public static void HandleIncidentResolvedSignal(
+        EventEnvelope<IncidentResolvedConsolidationSignal> envelope, IKnowledgeClient knowledgeClient)
+    {
+        var payload = envelope.Payload;
+        knowledgeClient.ConsolidateAsync(
+            new MemoryRef(payload.SourceMemoryType, payload.SourceKey),
+            payload.Reason,
+            payload.EvidenceRefs,
+            suppressLessonLearned: false).GetAwaiter().GetResult();
+    }
+}

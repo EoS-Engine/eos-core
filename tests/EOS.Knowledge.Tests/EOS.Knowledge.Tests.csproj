@@ -15,8 +15,6 @@
     <ProjectReference Include="..\..\src\EOS.KnowledgeGraph\EOS.KnowledgeGraph.csproj" />
     <ProjectReference Include="..\..\src\EOS.SDK\EOS.SDK.csproj" />
     <ProjectReference Include="..\..\src\EOS.AIProvider\EOS.AIProvider.csproj" />
-    <ProjectReference Include="..\..\src\EOS.Contracts\EOS.Contracts.csproj" />
-    <ProjectReference Include="..\..\src\EOS.Orchestrator\EOS.Orchestrator.csproj" />
   </ItemGroup>
 
 </Project>
