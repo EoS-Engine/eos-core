@@ -130,7 +130,8 @@ try
         new RedisMemorySourceStore(redisMemoryStore),
         new EventMediatorContextAssemblyEventPublisher(eventMediator),
         embeddingGenerator,
-        new EventMediatorLessonLearnedEventPublisher(eventMediator));
+        new EventMediatorLessonLearnedEventPublisher(eventMediator),
+        new EventMediatorMemoryConsolidatedEventPublisher(eventMediator));
 
     var askCommand = new AskCommand(
         reasoningEngine, protectionGate, knowledgeClient, host.Services.GetRequiredService<ILogger<AskCommand>>());
@@ -200,5 +201,19 @@ internal sealed class EventMediatorLessonLearnedEventPublisher(EventMediator eve
             version: "v1",
             producer: "EOS.Knowledge",
             payload: new LessonLearnedPayload(episodicEntryId, source)));
+    }
+}
+
+internal sealed record MemoryConsolidatedPayload(MemoryType SourceMemoryType, Guid EpisodicEntryId);
+
+internal sealed class EventMediatorMemoryConsolidatedEventPublisher(EventMediator eventMediator) : IMemoryConsolidatedEventPublisher
+{
+    public void PublishMemoryConsolidated(MemoryType sourceMemoryType, Guid episodicEntryId)
+    {
+        eventMediator.Publish(EventEnvelope<MemoryConsolidatedPayload>.Create(
+            eventType: "MemoryConsolidated",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new MemoryConsolidatedPayload(sourceMemoryType, episodicEntryId)));
     }
 }

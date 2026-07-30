@@ -10,7 +10,8 @@ public sealed class KnowledgeClient(
     IMemorySourceStore memorySourceStore,
     IContextAssemblyEventPublisher? contextAssemblyEventPublisher = null,
     IEmbeddingGenerator? embeddingGenerator = null,
-    ILessonLearnedEventPublisher? lessonLearnedEventPublisher = null) : IKnowledgeClient
+    ILessonLearnedEventPublisher? lessonLearnedEventPublisher = null,
+    IMemoryConsolidatedEventPublisher? memoryConsolidatedEventPublisher = null) : IKnowledgeClient
 {
     private static readonly IReadOnlyList<KnowledgeNodeType> AllNodeTypes =
     [
@@ -176,6 +177,8 @@ public sealed class KnowledgeClient(
         }
 
         await memorySourceStore.MarkConsolidatedAsync(source, cancellationToken);
+
+        memoryConsolidatedEventPublisher?.PublishMemoryConsolidated(source.Type, episodicEntryId);
 
         return episodicEntryId;
     }

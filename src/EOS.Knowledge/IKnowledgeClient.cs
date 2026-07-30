@@ -72,9 +72,12 @@ public interface IKnowledgeClient
     /// trigger-dependent rule. <paramref name="suppressLessonLearned"/> is <see langword="true"/>
     /// only for the Gate-failure trigger (§16.1), where <c>EOS.Gates</c> has already emitted
     /// <c>LessonLearned</c> per Constitution §0.8.3 — ADR-015-002 requires this call not
-    /// re-emit it. Idempotent per §25/§20.1's precondition: a already-consolidated
-    /// <paramref name="source"/> is a no-op (returns <see cref="Guid.Empty"/>) with a warning
-    /// log, never an error.
+    /// re-emit it. Also emits <c>MemoryConsolidated</c> (§21, informational only) for every
+    /// trigger that actually creates an entry — including the Gate-failure trigger, which still
+    /// emits <c>MemoryConsolidated</c> even though it suppresses <c>LessonLearned</c>. Idempotent
+    /// per §25/§20.1's precondition: an already-consolidated <paramref name="source"/> is a
+    /// no-op (returns <see cref="Guid.Empty"/>, emits neither event) with a warning log, never an
+    /// error.
     /// </summary>
     Task<Guid> ConsolidateAsync(
         MemoryRef source,

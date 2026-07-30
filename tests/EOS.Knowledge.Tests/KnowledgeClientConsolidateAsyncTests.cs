@@ -17,20 +17,22 @@ public class KnowledgeClientConsolidateAsyncTests
         ?? throw new InvalidOperationException("EOS_CHROMADB_ENDPOINT is not set.");
 
     [Fact]
-    public async Task ConsolidateAsync_CreatesRealEpisodicRow_IndexesARealEmbedding_AndEmitsLessonLearned()
+    public async Task ConsolidateAsync_CreatesRealEpisodicRow_IndexesARealEmbedding_AndEmitsLessonLearnedAndMemoryConsolidated()
     {
         var store = new KnowledgeGraphStore(ConnectionString);
         await store.EnsureTableExistsAsync(CancellationToken.None);
         var key = $"working:{Guid.NewGuid()}";
         var memorySourceStore = new InMemoryMemorySourceStore(key, "the reasoning engine explained SOLID principles");
-        var publisher = new CapturingLessonLearnedEventPublisher();
+        var lessonLearnedPublisher = new CapturingLessonLearnedEventPublisher();
+        var memoryConsolidatedPublisher = new CapturingMemoryConsolidatedEventPublisher();
         var client = new KnowledgeClient(
             store,
             DefaultRankingWeights,
             new ChromaVectorStore(ChromaDbEndpoint),
             memorySourceStore,
             embeddingGenerator: new FixedEmbeddingGenerator(),
-            lessonLearnedEventPublisher: publisher);
+            lessonLearnedEventPublisher: lessonLearnedPublisher,
+            memoryConsolidatedEventPublisher: memoryConsolidatedPublisher);
         var source = new MemoryRef(MemoryType.Working, key);
 
         var episodicEntryId = await client.ConsolidateAsync(
@@ -42,49 +44,62 @@ public class KnowledgeClientConsolidateAsyncTests
         Assert.Equal(KnowledgeNodeType.Lesson, persisted.NodeType);
         Assert.Equal("the reasoning engine explained SOLID principles", persisted.Content);
         Assert.Equal(["artifact://evidence/1"], persisted.EvidenceRefs);
-        Assert.Equal(episodicEntryId, publisher.LastEpisodicEntryId);
-        Assert.Equal(key, publisher.LastSource);
+        Assert.Equal(episodicEntryId, lessonLearnedPublisher.LastEpisodicEntryId);
+        Assert.Equal(key, lessonLearnedPublisher.LastSource);
+        Assert.Equal(episodicEntryId, memoryConsolidatedPublisher.LastEpisodicEntryId);
+        Assert.Equal(MemoryType.Working, memoryConsolidatedPublisher.LastSourceMemoryType);
     }
 
     [Fact]
-    public async Task ConsolidateAsync_SuppressesLessonLearned_ForTheGateFailureTrigger()
+    public async Task ConsolidateAsync_SuppressesLessonLearned_ButStillEmitsMemoryConsolidated_ForTheGateFailureTrigger()
     {
         var store = new KnowledgeGraphStore(ConnectionString);
         await store.EnsureTableExistsAsync(CancellationToken.None);
         var key = $"shortterm:{Guid.NewGuid()}";
         var memorySourceStore = new InMemoryMemorySourceStore(key, "a novel gate failure occurred");
-        var publisher = new CapturingLessonLearnedEventPublisher();
+        var lessonLearnedPublisher = new CapturingLessonLearnedEventPublisher();
+        var memoryConsolidatedPublisher = new CapturingMemoryConsolidatedEventPublisher();
         var client = new KnowledgeClient(
             store,
             DefaultRankingWeights,
             new ChromaVectorStore(ChromaDbEndpoint),
             memorySourceStore,
-            lessonLearnedEventPublisher: publisher);
+            lessonLearnedEventPublisher: lessonLearnedPublisher,
+            memoryConsolidatedEventPublisher: memoryConsolidatedPublisher);
         var source = new MemoryRef(MemoryType.ShortTerm, key);
 
         var episodicEntryId = await client.ConsolidateAsync(
             source, "novel gate failure", [], suppressLessonLearned: true, cancellationToken: CancellationToken.None);
 
         Assert.NotEqual(Guid.Empty, episodicEntryId);
-        Assert.Null(publisher.LastEpisodicEntryId);
+        Assert.Null(lessonLearnedPublisher.LastEpisodicEntryId);
+        Assert.Equal(episodicEntryId, memoryConsolidatedPublisher.LastEpisodicEntryId);
+        Assert.Equal(MemoryType.ShortTerm, memoryConsolidatedPublisher.LastSourceMemoryType);
     }
 
     [Fact]
-    public async Task ConsolidateAsync_IsIdempotent_WhenSourceIsAlreadyConsolidated()
+    public async Task ConsolidateAsync_IsIdempotent_WhenSourceIsAlreadyConsolidated_AndDoesNotReEmitMemoryConsolidated()
     {
         var store = new KnowledgeGraphStore(ConnectionString);
         await store.EnsureTableExistsAsync(CancellationToken.None);
         var key = $"session:{Guid.NewGuid()}";
         var memorySourceStore = new InMemoryMemorySourceStore(key, "session content");
+        var memoryConsolidatedPublisher = new CapturingMemoryConsolidatedEventPublisher();
         var client = new KnowledgeClient(
-            store, DefaultRankingWeights, new ChromaVectorStore(ChromaDbEndpoint), memorySourceStore);
+            store,
+            DefaultRankingWeights,
+            new ChromaVectorStore(ChromaDbEndpoint),
+            memorySourceStore,
+            memoryConsolidatedEventPublisher: memoryConsolidatedPublisher);
         var source = new MemoryRef(MemoryType.Session, key);
 
         var firstResult = await client.ConsolidateAsync(source, "reason", [], cancellationToken: CancellationToken.None);
+        memoryConsolidatedPublisher.Reset();
         var secondResult = await client.ConsolidateAsync(source, "reason", [], cancellationToken: CancellationToken.None);
 
         Assert.NotEqual(Guid.Empty, firstResult);
         Assert.Equal(Guid.Empty, secondResult);
+        Assert.Null(memoryConsolidatedPublisher.LastEpisodicEntryId);
     }
 
     [Fact]
@@ -134,6 +149,25 @@ public class KnowledgeClientConsolidateAsyncTests
         {
             LastEpisodicEntryId = episodicEntryId;
             LastSource = source;
+        }
+    }
+
+    private sealed class CapturingMemoryConsolidatedEventPublisher : IMemoryConsolidatedEventPublisher
+    {
+        public Guid? LastEpisodicEntryId { get; private set; }
+
+        public MemoryType? LastSourceMemoryType { get; private set; }
+
+        public void PublishMemoryConsolidated(MemoryType sourceMemoryType, Guid episodicEntryId)
+        {
+            LastSourceMemoryType = sourceMemoryType;
+            LastEpisodicEntryId = episodicEntryId;
+        }
+
+        public void Reset()
+        {
+            LastEpisodicEntryId = null;
+            LastSourceMemoryType = null;
         }
     }
 }
