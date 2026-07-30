@@ -49,4 +49,40 @@ public interface IKnowledgeClient
     /// </exception>
     Task<IEnumerable<KnowledgeNode>> QuerySimilarAsync(
         Guid nodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Memory-Management-Specification-v1.0 §15.1/§15.2/§20.1's budgeted, ranked context
+    /// composition. Per ADR-015-005, this is symbolic-only this WP: <see
+    /// cref="ContextRequest.IncludesEpisodic"/>/<see cref="ContextRequest.IncludesSemantic"/>
+    /// are honored via <c>KnowledgeGraphStore</c>; <see cref="ContextRequest.IncludesWorking"/>/
+    /// <see cref="ContextRequest.IncludesShortTerm"/> are structurally present but intentionally
+    /// inert, since <c>KnowledgeClient</c> has no legal dependency path to
+    /// <c>RedisMemoryStore</c> (<c>EOS.Infrastructure</c>). §15.2's truncation transparency is
+    /// honored: <see cref="ContextPayload.Truncated"/> is always populated truthfully.
+    /// </summary>
+    Task<ContextPayload> AssembleContextAsync(
+        ContextRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Memory-Management-Specification-v1.0 §16.2/§20.1's consolidation algorithm: promotes
+    /// ephemeral memory (Working/Short-term/Session, dereferenced via <paramref name="source"/>
+    /// per ADR-015-004) into a persistent Episodic <see cref="KnowledgeNode"/>, indexes its
+    /// embedding (best-effort — §25: "indexing deferred and retried" if unavailable, never
+    /// blocking the graph write), and emits <c>LessonLearned</c> per ADR-015-002's
+    /// trigger-dependent rule. <paramref name="suppressLessonLearned"/> is <see langword="true"/>
+    /// only for the Gate-failure trigger (§16.1), where <c>EOS.Gates</c> has already emitted
+    /// <c>LessonLearned</c> per Constitution §0.8.3 — ADR-015-002 requires this call not
+    /// re-emit it. Also emits <c>MemoryConsolidated</c> (§21, informational only) for every
+    /// trigger that actually creates an entry — including the Gate-failure trigger, which still
+    /// emits <c>MemoryConsolidated</c> even though it suppresses <c>LessonLearned</c>. Idempotent
+    /// per §25/§20.1's precondition: an already-consolidated <paramref name="source"/> is a
+    /// no-op (returns <see cref="Guid.Empty"/>, emits neither event) with a warning log, never an
+    /// error.
+    /// </summary>
+    Task<Guid> ConsolidateAsync(
+        MemoryRef source,
+        string reason,
+        string[] evidenceRefs,
+        bool suppressLessonLearned = false,
+        CancellationToken cancellationToken = default);
 }

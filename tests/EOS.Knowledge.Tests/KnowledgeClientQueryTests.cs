@@ -1,4 +1,5 @@
 using EOS.KnowledgeGraph;
+using EOS.VectorStore;
 
 namespace EOS.Knowledge.Tests;
 
@@ -11,11 +12,16 @@ public class KnowledgeClientQueryTests
         Environment.GetEnvironmentVariable("EOS_SQLSERVER_CONNECTION_STRING")
         ?? throw new InvalidOperationException("EOS_SQLSERVER_CONNECTION_STRING is not set.");
 
+    private static string ChromaDbEndpoint =>
+        Environment.GetEnvironmentVariable("EOS_CHROMADB_ENDPOINT")
+        ?? throw new InvalidOperationException("EOS_CHROMADB_ENDPOINT is not set.");
+
     private static async Task<(KnowledgeGraphStore Store, IKnowledgeClient Client)> CreateClientAsync()
     {
         var store = new KnowledgeGraphStore(ConnectionString);
         await store.EnsureTableExistsAsync(CancellationToken.None);
-        return (store, new KnowledgeClient(store, DefaultRankingWeights));
+        return (store, new KnowledgeClient(
+            store, DefaultRankingWeights, new ChromaVectorStore(ChromaDbEndpoint), NeverCalledMemorySourceStore.Instance));
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using EOS.KnowledgeGraph;
+using EOS.VectorStore;
 
 namespace EOS.Knowledge.Tests;
 
@@ -11,12 +12,17 @@ public class KnowledgeClientTests
         Environment.GetEnvironmentVariable("EOS_SQLSERVER_CONNECTION_STRING")
         ?? throw new InvalidOperationException("EOS_SQLSERVER_CONNECTION_STRING is not set.");
 
+    private static string ChromaDbEndpoint =>
+        Environment.GetEnvironmentVariable("EOS_CHROMADB_ENDPOINT")
+        ?? throw new InvalidOperationException("EOS_CHROMADB_ENDPOINT is not set.");
+
     [Fact]
     public async Task UpdateAsync_PersistsASchemaValidKnowledgeNode_VerifiedThroughTheStoreDirectly()
     {
         var store = new KnowledgeGraphStore(ConnectionString);
         await store.EnsureTableExistsAsync(CancellationToken.None);
-        IKnowledgeClient client = new KnowledgeClient(store, DefaultRankingWeights);
+        IKnowledgeClient client = new KnowledgeClient(
+            store, DefaultRankingWeights, new ChromaVectorStore(ChromaDbEndpoint), NeverCalledMemorySourceStore.Instance);
         var nodeId = Guid.NewGuid();
 
         await client.UpdateAsync(
@@ -42,7 +48,8 @@ public class KnowledgeClientTests
     {
         var store = new KnowledgeGraphStore(ConnectionString);
         await store.EnsureTableExistsAsync(CancellationToken.None);
-        IKnowledgeClient client = new KnowledgeClient(store, DefaultRankingWeights);
+        IKnowledgeClient client = new KnowledgeClient(
+            store, DefaultRankingWeights, new ChromaVectorStore(ChromaDbEndpoint), NeverCalledMemorySourceStore.Instance);
         var nodeId = Guid.NewGuid();
 
         await client.UpdateAsync(nodeId, KnowledgeNodeType.Fact, "first", [], [], CancellationToken.None);
