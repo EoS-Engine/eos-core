@@ -1,4 +1,6 @@
+using EOS.Contracts;
 using EOS.KnowledgeGraph;
+using EOS.Orchestrator;
 using EOS.VectorStore;
 
 namespace EOS.Knowledge.Tests;
@@ -115,6 +117,52 @@ public class KnowledgeClientConsolidateAsyncTests
         await Assert.ThrowsAsync<ArgumentException>(
             () => client.ConsolidateAsync(source, "reason", [], cancellationToken: CancellationToken.None));
     }
+
+    [Fact]
+    public async Task SimulatedEventMediatorPublish_TriggersConsolidateAsync_ForTheGateFailureSignal_AndSuppressesLessonLearned()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var key = $"shortterm:{Guid.NewGuid()}";
+        var memorySourceStore = new InMemoryMemorySourceStore(key, "a novel gate failure occurred");
+        var lessonLearnedPublisher = new CapturingLessonLearnedEventPublisher();
+        var memoryConsolidatedPublisher = new CapturingMemoryConsolidatedEventPublisher();
+        var client = new KnowledgeClient(
+            store,
+            DefaultRankingWeights,
+            new ChromaVectorStore(ChromaDbEndpoint),
+            memorySourceStore,
+            lessonLearnedEventPublisher: lessonLearnedPublisher,
+            memoryConsolidatedEventPublisher: memoryConsolidatedPublisher);
+        var eventMediator = new EventMediator();
+        Guid? triggeredEpisodicEntryId = null;
+
+        eventMediator.Subscribe<SimulatedGateFailureSignal>(envelope =>
+        {
+            var payload = envelope.Payload;
+            triggeredEpisodicEntryId = client.ConsolidateAsync(
+                new MemoryRef(payload.SourceMemoryType, payload.SourceKey),
+                payload.Reason,
+                payload.EvidenceRefs,
+                suppressLessonLearned: true).GetAwaiter().GetResult();
+        });
+
+        eventMediator.Publish(EventEnvelope<SimulatedGateFailureSignal>.Create(
+            eventType: "GateFailureConsolidationSignal",
+            version: "v1",
+            producer: "EOS.Gates",
+            payload: new SimulatedGateFailureSignal(MemoryType.ShortTerm, key, "novel gate failure", [])));
+
+        Assert.NotNull(triggeredEpisodicEntryId);
+        Assert.NotEqual(Guid.Empty, triggeredEpisodicEntryId!.Value);
+        var persisted = await store.GetByIdAsync(triggeredEpisodicEntryId.Value, CancellationToken.None);
+        Assert.NotNull(persisted);
+        Assert.Null(lessonLearnedPublisher.LastEpisodicEntryId);
+        Assert.Equal(triggeredEpisodicEntryId.Value, memoryConsolidatedPublisher.LastEpisodicEntryId);
+    }
+
+    private sealed record SimulatedGateFailureSignal(
+        MemoryType SourceMemoryType, string SourceKey, string Reason, string[] EvidenceRefs);
 
     private sealed class InMemoryMemorySourceStore(string key, string content) : IMemorySourceStore
     {

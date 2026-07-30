@@ -133,6 +133,26 @@ try
         new EventMediatorLessonLearnedEventPublisher(eventMediator),
         new EventMediatorMemoryConsolidatedEventPublisher(eventMediator));
 
+    eventMediator.Subscribe<GateFailureConsolidationSignal>(envelope =>
+    {
+        var payload = envelope.Payload;
+        knowledgeClient.ConsolidateAsync(
+            new MemoryRef(payload.SourceMemoryType, payload.SourceKey),
+            payload.Reason,
+            payload.EvidenceRefs,
+            suppressLessonLearned: true).GetAwaiter().GetResult();
+    });
+
+    eventMediator.Subscribe<IncidentResolvedConsolidationSignal>(envelope =>
+    {
+        var payload = envelope.Payload;
+        knowledgeClient.ConsolidateAsync(
+            new MemoryRef(payload.SourceMemoryType, payload.SourceKey),
+            payload.Reason,
+            payload.EvidenceRefs,
+            suppressLessonLearned: false).GetAwaiter().GetResult();
+    });
+
     var askCommand = new AskCommand(
         reasoningEngine, protectionGate, knowledgeClient, host.Services.GetRequiredService<ILogger<AskCommand>>());
 
@@ -217,3 +237,22 @@ internal sealed class EventMediatorMemoryConsolidatedEventPublisher(EventMediato
             payload: new MemoryConsolidatedPayload(sourceMemoryType, episodicEntryId)));
     }
 }
+
+/// <summary>
+/// Memory-Management-Specification-v1.0 §16.1's "Automatic, on Gate failure (novel failure)"
+/// trigger (ADR-015-003): the signal <c>Program.cs</c> subscribes to via <c>EventMediator</c>
+/// to invoke <see cref="IKnowledgeClient.ConsolidateAsync"/> with
+/// <c>suppressLessonLearned: true</c>, since <c>EOS.Gates</c> has already emitted
+/// <c>LessonLearned</c> per Constitution §0.8.3 (ADR-015-002).
+/// </summary>
+internal sealed record GateFailureConsolidationSignal(
+    MemoryType SourceMemoryType, string SourceKey, string Reason, string[] EvidenceRefs);
+
+/// <summary>
+/// Memory-Management-Specification-v1.0 §16.1's "Automatic, on IncidentResolved" trigger
+/// (ADR-015-003): the signal <c>Program.cs</c> subscribes to via <c>EventMediator</c> to invoke
+/// <see cref="IKnowledgeClient.ConsolidateAsync"/> with real <c>LessonLearned</c> emission
+/// (ADR-015-002).
+/// </summary>
+internal sealed record IncidentResolvedConsolidationSignal(
+    MemoryType SourceMemoryType, string SourceKey, string Reason, string[] EvidenceRefs);
