@@ -52,4 +52,19 @@ public sealed record ThresholdsOptions
 
     [Range(0.0, 1.0)]
     public required double RankingAccessFrequencyWeight { get; init; }
+
+    // Memory Expiration (Memory-Management-Specification-v1.0 §18). The specification names
+    // Thresholds.json explicitly as Session's "idle-timeout policy" configuration home; applied
+    // identically to Short-term's terminal-Task-Lifecycle-state trigger as a TTL safety net.
+    [Range(1, int.MaxValue)]
+    public required int ShortTermMemoryExpirationSeconds { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int SessionMemoryIdleTimeoutSeconds { get; init; }
+
+    // WP-016's summarization stub (ISummarizer, truncation-only, real implementation at
+    // WP-020) has no length defined by any specification — this value has no basis beyond
+    // being an arbitrary, externally-configurable stub parameter, never a business rule.
+    [Range(1, int.MaxValue)]
+    public required int SummarizationStubTruncationLength { get; init; }
 }
