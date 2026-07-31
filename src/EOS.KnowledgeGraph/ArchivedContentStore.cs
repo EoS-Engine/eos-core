@@ -27,14 +27,30 @@ public sealed class ArchivedContentStore(string connectionString)
                 OriginalContent NVARCHAR(MAX) NOT NULL,
                 ArchivedAt DATETIMEOFFSET NOT NULL
             )
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ArchivedContent_SourceNodeId_ArchivedAt')
+            CREATE INDEX IX_ArchivedContent_SourceNodeId_ArchivedAt ON ArchivedContent (SourceNodeId, ArchivedAt DESC)
             """;
-        await command.ExecuteNonQueryAsync(cancellationToken);
+
+        try
+        {
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException ex) when (ex.Number is 1913 or 2714)
+        {
+            // 1913: "already has an index" / 2714: "object already exists" — the IF NOT EXISTS
+            // check above is not atomic, so concurrent callers (this method has no caller-side
+            // synchronization, by design, matching KnowledgeGraphStore.EnsureTableExistsAsync's
+            // identical pattern) can race to create the same index/table; the loser's error is
+            // benign since the object the loser wanted now exists regardless of who created it.
+        }
     }
 
     /// <summary>
     /// Insert-only archival: never updates or deletes an existing row. Returns the new
-    /// archive entry's id, which callers persist as the compressed node's <c>original_ref</c>
-    /// (§17.2).
+    /// archive entry's id. The current implementation does not persist this id on the
+    /// compressed node; retrieval instead uses
+    /// <see cref="GetLatestArchivedContentBySourceNodeIdAsync"/>, keyed by source node id
+    /// rather than by this returned <c>ArchiveId</c> (see that method's own documentation).
     /// </summary>
     public async Task<Guid> ArchiveAsync(Guid sourceNodeId, string originalContent, CancellationToken cancellationToken)
     {
