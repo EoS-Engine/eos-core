@@ -13,5 +13,8 @@
   "rankingVectorSimilarityWeight": 0.4,
   "rankingRecencyWeight": 0.3,
   "rankingDomainMatchWeight": 0.2,
-  "rankingAccessFrequencyWeight": 0.1
+  "rankingAccessFrequencyWeight": 0.1,
+  "shortTermMemoryExpirationSeconds": 3600,
+  "sessionMemoryIdleTimeoutSeconds": 1800,
+  "summarizationStubTruncationLength": 200
 }

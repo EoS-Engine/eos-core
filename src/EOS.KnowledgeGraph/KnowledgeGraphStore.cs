@@ -50,6 +50,27 @@ public sealed class KnowledgeGraphStore(string connectionString)
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Memory-Management-Specification-v1.0 §17.2's <c>replace_content()</c> step: updates only
+    /// the <c>Content</c> column of an existing row, leaving <c>NodeType</c>, tags, evidence
+    /// refs, and <c>CreatedAt</c> untouched — the compression event narrows storage footprint,
+    /// it does not re-author the node's identity or provenance.
+    /// </summary>
+    public async Task ReplaceContentAsync(Guid nodeId, string newContent, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE KnowledgeNode SET Content = @Content WHERE NodeId = @NodeId
+            """;
+        command.Parameters.AddWithValue("@NodeId", nodeId);
+        command.Parameters.AddWithValue("@Content", newContent);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<KnowledgeNode?> GetByIdAsync(Guid nodeId, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(connectionString);

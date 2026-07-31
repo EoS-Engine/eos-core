@@ -27,7 +27,7 @@ if (results.Count == 0 || !results.All(r => r.Status))
     return 1;
 }
 
-if (args is not ["ask", var text])
+if (args is not ["ask", _] and not ["compress"])
 {
     return 0;
 }
@@ -135,10 +135,46 @@ try
 
     AutomaticConsolidationTriggerHandlers.RegisterSubscriptions(eventMediator, knowledgeClient);
 
+    var archivedContentStore = new ArchivedContentStore(connectionOptions.SqlServerConnectionString);
+    await archivedContentStore.EnsureTableExistsAsync(CancellationToken.None);
+    var compressionSweep = new CompressionSweep(
+        knowledgeGraphStore,
+        archivedContentStore,
+        new NotYetPromotedPipelineStageStore(),
+        new NeverReadRecentlyStub(),
+        new NoActiveRetentionHoldsStub(),
+        new TruncatingSummarizerStub(thresholdsOptions.SummarizationStubTruncationLength),
+        new EventMediatorMemoryCompressedEventPublisher(eventMediator));
+    // Real, independently tested infrastructure with no production caller yet (mirrors
+    // RedisMemoryStore's own WP-014 precedent) — no WP before this one writes production
+    // Short-term/Session data, so there is nothing yet to pass this policy's computed TTL to.
+    var memoryExpirationPolicy = new MemoryExpirationPolicy(
+        thresholdsOptions.ShortTermMemoryExpirationSeconds, thresholdsOptions.SessionMemoryIdleTimeoutSeconds);
+    _ = memoryExpirationPolicy;
+
+    if (args is ["compress"])
+    {
+        var compressionLogger = host.Services.GetRequiredService<ILogger<CompressionSweep>>();
+        var compressionActionRequest = new ActionRequest(
+            ActionId: Guid.NewGuid(), ActionType: "MemoryCompression", Actor: "HumanOperator", RiskScore: 10);
+        var compressionValidationResult = protectionGate.Validate(compressionActionRequest);
+        if (compressionValidationResult.Verdict != ProtectionVerdict.Allow)
+        {
+            compressionLogger.LogError(
+                "Compression sweep was not allowed: {Verdict} - {Reason}",
+                compressionValidationResult.Verdict, compressionValidationResult.Reason);
+            return 1;
+        }
+
+        var compressedCount = await compressionSweep.RunAsync();
+        Console.WriteLine($"Compression sweep complete: {compressedCount} entr{(compressedCount == 1 ? "y" : "ies")} compressed.");
+        return 0;
+    }
+
     var askCommand = new AskCommand(
         reasoningEngine, protectionGate, knowledgeClient, host.Services.GetRequiredService<ILogger<AskCommand>>());
 
-    return await askCommand.ExecuteAsync(text);
+    return await askCommand.ExecuteAsync(args[1]);
 }
 finally
 {
@@ -190,6 +226,70 @@ internal sealed class RedisMemorySourceStore(RedisMemoryStore redisMemoryStore) 
         redisMemoryStore.SetAsync(ConsolidatedMarkerKey(source), "true", null, cancellationToken);
 
     private static string ConsolidatedMarkerKey(MemoryRef source) => $"{source.Key}:consolidated";
+}
+
+/// <summary>
+/// WP-016's stub for <see cref="IPipelineStageStore"/> (see that interface's own documentation
+/// for why): no <c>PipelineRecord</c> exists anywhere until WP-026, so no entry can be proven
+/// to have reached <c>Pattern</c> stage — always reporting <see langword="false"/> is the
+/// architecturally correct answer, not a placeholder.
+/// </summary>
+internal sealed class NotYetPromotedPipelineStageStore : IPipelineStageStore
+{
+    public Task<bool> HasReachedPatternStageOrBeyondAsync(
+        Guid episodicEntryId, CancellationToken cancellationToken = default) => Task.FromResult(false);
+}
+
+/// <summary>
+/// WP-016's stub for <see cref="ISummarizer"/> (see that interface's own documentation for
+/// why): <c>EOS.Reasoning</c>'s real <c>summarize()</c> does not exist until WP-020. Truncates
+/// rather than summarizes — never claims to produce a real summary. Deferred, not implemented;
+/// no code here claims otherwise.
+/// </summary>
+internal sealed class TruncatingSummarizerStub(int maxLength) : ISummarizer
+{
+    public Task<string> SummarizeAsync(string content, CancellationToken cancellationToken = default)
+    {
+        var truncated = content.Length <= maxLength ? content : content[..maxLength];
+        return Task.FromResult(truncated);
+    }
+}
+
+/// <summary>
+/// WP-016's stub for <see cref="IReadRecencyTracker"/> (see that interface's own documentation
+/// for why): no read-access-tracking mechanism exists anywhere in this codebase, so always
+/// reporting "not read recently" is the permissive default that never blocks eligibility on
+/// data nothing here can currently supply.
+/// </summary>
+internal sealed class NeverReadRecentlyStub : IReadRecencyTracker
+{
+    public Task<bool> WasReadRecentlyAsync(Guid episodicEntryId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+}
+
+/// <summary>
+/// WP-016's stub for <see cref="IRetentionHoldPolicy"/> (see that interface's own documentation
+/// for why): no policy source exists anywhere in this codebase to set a retention hold, so
+/// always reporting "no active hold" is the correct default.
+/// </summary>
+internal sealed class NoActiveRetentionHoldsStub : IRetentionHoldPolicy
+{
+    public Task<bool> HasActiveHoldAsync(Guid episodicEntryId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+}
+
+internal sealed record MemoryCompressedPayload(Guid EntryId, int OriginalSize, int SummarySize);
+
+internal sealed class EventMediatorMemoryCompressedEventPublisher(EventMediator eventMediator) : IMemoryCompressedEventPublisher
+{
+    public void PublishMemoryCompressed(Guid entryId, int originalSize, int summarySize)
+    {
+        eventMediator.Publish(EventEnvelope<MemoryCompressedPayload>.Create(
+            eventType: "MemoryCompressed",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new MemoryCompressedPayload(entryId, originalSize, summarySize)));
+    }
 }
 
 internal sealed record LessonLearnedPayload(Guid EpisodicEntryId, string Source);
