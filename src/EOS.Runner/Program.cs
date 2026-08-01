@@ -138,6 +138,8 @@ try
 
     // Real, independently tested infrastructure with no production caller yet — no WP before
     // this one has a reason to classify a node or add a relationship in the "ask" path.
+    var freshnessTypeWeights = knowledgeOptions.FreshnessTypeWeights
+        .ToDictionary(pair => Enum.Parse<TaxonomyClassification>(pair.Key), pair => pair.Value);
     var knowledgeManagementClient = new KnowledgeManagementClient(
         knowledgeGraphStore,
         knowledgeClient,
@@ -145,8 +147,22 @@ try
             knowledgeGraphStore,
             knowledgeOptions.DependsOnDisallowedTargetTypes.Select(Enum.Parse<KnowledgeNodeType>).ToList(),
             knowledgeOptions.GovernanceApprovalRequiredRelationshipTypes.Select(Enum.Parse<RelationshipType>).ToList()),
+        new FreshnessCalculator(knowledgeOptions.FreshnessDecayHalfLifeDays, freshnessTypeWeights),
+        new DuplicateDetector(knowledgeGraphStore, new StructuralOnlyCompareProviderStub()),
+        protectionGate,
+        new KnowledgeRankingWeights(
+            knowledgeOptions.RankingConfidenceWeight,
+            knowledgeOptions.RankingReliabilityWeight,
+            knowledgeOptions.RankingRelationshipRelevanceWeight,
+            knowledgeOptions.RankingDeprecationPenaltyWeight),
+        knowledgeOptions.FreshnessExpirationThreshold,
         new EventMediatorKnowledgeClassifiedEventPublisher(eventMediator),
-        new EventMediatorKnowledgeRelationshipAddedEventPublisher(eventMediator));
+        new EventMediatorKnowledgeRelationshipAddedEventPublisher(eventMediator),
+        new EventMediatorKnowledgeQualityUpdatedEventPublisher(eventMediator),
+        new EventMediatorKnowledgeGovernanceActionRequestedEventPublisher(eventMediator),
+        new EventMediatorKnowledgeGovernanceActionAppliedEventPublisher(eventMediator),
+        new EventMediatorKnowledgeFreshnessExpiredEventPublisher(eventMediator),
+        new EventMediatorKnowledgeDuplicateFlaggedEventPublisher(eventMediator));
     _ = knowledgeManagementClient;
 
     var archivedContentStore = new ArchivedContentStore(connectionOptions.SqlServerConnectionString);
@@ -331,6 +347,88 @@ internal sealed class EventMediatorKnowledgeRelationshipAddedEventPublisher(Even
             version: "v1",
             producer: "EOS.Knowledge",
             payload: new KnowledgeRelationshipAddedPayload(sourceNodeId, targetNodeId, relationshipType)));
+    }
+}
+
+/// <summary>
+/// WP-018's stub for <see cref="ICompareProvider"/> (see that interface's own documentation for
+/// why): <c>IReasoningEngineClient</c> has no <c>compare()</c> member until WP-020. Always
+/// reports "not semantically similar" — <see cref="DuplicateDetector"/>'s structural gate (§18.3)
+/// is the real, tested signal; this stub never claims a semantic judgment it cannot make.
+/// </summary>
+internal sealed class StructuralOnlyCompareProviderStub : ICompareProvider
+{
+    public Task<bool> AreSimilarAsync(string contentA, string contentB, CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+}
+
+internal sealed record KnowledgeQualityUpdatedPayload(Guid NodeId, QualityProfile QualityProfile);
+
+internal sealed class EventMediatorKnowledgeQualityUpdatedEventPublisher(EventMediator eventMediator) : IKnowledgeQualityUpdatedEventPublisher
+{
+    public void PublishKnowledgeQualityUpdated(Guid nodeId, QualityProfile qualityProfile)
+    {
+        eventMediator.Publish(EventEnvelope<KnowledgeQualityUpdatedPayload>.Create(
+            eventType: "KnowledgeQualityUpdated",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new KnowledgeQualityUpdatedPayload(nodeId, qualityProfile)));
+    }
+}
+
+internal sealed record KnowledgeGovernanceActionRequestedPayload(Guid NodeId, GovernanceActionType ActionType, string RequestedBy);
+
+internal sealed class EventMediatorKnowledgeGovernanceActionRequestedEventPublisher(EventMediator eventMediator) : IKnowledgeGovernanceActionRequestedEventPublisher
+{
+    public void PublishKnowledgeGovernanceActionRequested(Guid nodeId, GovernanceActionType actionType, string requestedBy)
+    {
+        eventMediator.Publish(EventEnvelope<KnowledgeGovernanceActionRequestedPayload>.Create(
+            eventType: "KnowledgeGovernanceActionRequested",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new KnowledgeGovernanceActionRequestedPayload(nodeId, actionType, requestedBy)));
+    }
+}
+
+internal sealed record KnowledgeGovernanceActionAppliedPayload(Guid NodeId, GovernanceActionType ActionType, int NewVersion);
+
+internal sealed class EventMediatorKnowledgeGovernanceActionAppliedEventPublisher(EventMediator eventMediator) : IKnowledgeGovernanceActionAppliedEventPublisher
+{
+    public void PublishKnowledgeGovernanceActionApplied(Guid nodeId, GovernanceActionType actionType, int newVersion)
+    {
+        eventMediator.Publish(EventEnvelope<KnowledgeGovernanceActionAppliedPayload>.Create(
+            eventType: "KnowledgeGovernanceActionApplied",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new KnowledgeGovernanceActionAppliedPayload(nodeId, actionType, newVersion)));
+    }
+}
+
+internal sealed record KnowledgeFreshnessExpiredPayload(Guid NodeId, double FreshnessScore);
+
+internal sealed class EventMediatorKnowledgeFreshnessExpiredEventPublisher(EventMediator eventMediator) : IKnowledgeFreshnessExpiredEventPublisher
+{
+    public void PublishKnowledgeFreshnessExpired(Guid nodeId, double freshnessScore)
+    {
+        eventMediator.Publish(EventEnvelope<KnowledgeFreshnessExpiredPayload>.Create(
+            eventType: "KnowledgeFreshnessExpired",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new KnowledgeFreshnessExpiredPayload(nodeId, freshnessScore)));
+    }
+}
+
+internal sealed record KnowledgeDuplicateFlaggedPayload(Guid NodeIdA, Guid NodeIdB, string SimilaritySource);
+
+internal sealed class EventMediatorKnowledgeDuplicateFlaggedEventPublisher(EventMediator eventMediator) : IKnowledgeDuplicateFlaggedEventPublisher
+{
+    public void PublishKnowledgeDuplicateFlagged(Guid nodeIdA, Guid nodeIdB, string similaritySource)
+    {
+        eventMediator.Publish(EventEnvelope<KnowledgeDuplicateFlaggedPayload>.Create(
+            eventType: "KnowledgeDuplicateFlagged",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new KnowledgeDuplicateFlaggedPayload(nodeIdA, nodeIdB, similaritySource)));
     }
 }
 
