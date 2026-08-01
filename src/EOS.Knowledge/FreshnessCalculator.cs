@@ -25,7 +25,7 @@ public sealed class FreshnessCalculator
         }
 
         this.decayHalfLifeDays = decayHalfLifeDays;
-        this.typeWeights = typeWeights;
+        this.typeWeights = typeWeights ?? throw new ArgumentNullException(nameof(typeWeights));
     }
 
     public double Calculate(DateTimeOffset? lastValidation, TaxonomyClassification? taxonomy, DateTimeOffset now)

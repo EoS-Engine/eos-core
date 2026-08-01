@@ -254,6 +254,37 @@ public class KnowledgeManagementClientTests
     }
 
     [Fact]
+    public async Task GetQualityAsync_RepublishesFreshnessExpired_OnASecondTransitionAfterRecovery()
+    {
+        var freshnessExpiredPublisher = new CapturingKnowledgeFreshnessExpiredEventPublisher();
+        var (store, client) = await CreateAsync(
+            freshnessExpiredPublisher: freshnessExpiredPublisher, freshnessExpirationThreshold: 0.5);
+        var nodeId = Guid.NewGuid();
+        await store.UpsertAsync(
+            new KnowledgeNode(nodeId, KnowledgeNodeType.Fact, "a fact", [], [], DateTimeOffset.UtcNow),
+            CancellationToken.None);
+
+        await client.GetQualityAsync(nodeId, CancellationToken.None);
+
+        var recoveredNode = await store.GetByIdAsync(nodeId, CancellationToken.None);
+        await store.UpsertAsync(
+            recoveredNode! with { Metadata = recoveredNode.Metadata! with { LastValidation = DateTimeOffset.UtcNow } },
+            CancellationToken.None);
+        await client.GetQualityAsync(nodeId, CancellationToken.None);
+
+        var staleAgainNode = await store.GetByIdAsync(nodeId, CancellationToken.None);
+        await store.UpsertAsync(
+            staleAgainNode! with
+            {
+                Metadata = staleAgainNode.Metadata! with { LastValidation = DateTimeOffset.UtcNow.AddDays(-1000) },
+            },
+            CancellationToken.None);
+        await client.GetQualityAsync(nodeId, CancellationToken.None);
+
+        Assert.Equal(2, freshnessExpiredPublisher.CallCount);
+    }
+
+    [Fact]
     public async Task SearchAsync_RanksHigherConfidenceItemFirst_WhenWeightingIsIndependent()
     {
         var (store, client) = await CreateAsync();
@@ -399,7 +430,8 @@ public class KnowledgeManagementClientTests
     public async Task FindDuplicatesAsync_ExcludesCandidate_WhenNoStructuralSignalIsShared()
     {
         var uniqueTag = $"test-tag-{Guid.NewGuid()}";
-        var (store, client) = await CreateAsync();
+        var duplicateFlaggedPublisher = new CapturingKnowledgeDuplicateFlaggedEventPublisher();
+        var (store, client) = await CreateAsync(duplicateFlaggedPublisher: duplicateFlaggedPublisher);
         var nodeId = Guid.NewGuid();
         var unrelatedId = Guid.NewGuid();
         await store.UpsertAsync(
@@ -418,13 +450,15 @@ public class KnowledgeManagementClientTests
         var duplicates = await client.FindDuplicatesAsync(nodeId, CancellationToken.None);
 
         Assert.DoesNotContain(duplicates, candidate => candidate.NodeId == unrelatedId);
+        Assert.Equal(0, duplicateFlaggedPublisher.CallCount);
     }
 
     [Fact]
     public async Task FindDuplicatesAsync_ExcludesCandidate_WhenOnlyTaxonomyIsShared_NotDomainTag()
     {
         var uniqueTag = $"test-tag-{Guid.NewGuid()}";
-        var (store, client) = await CreateAsync();
+        var duplicateFlaggedPublisher = new CapturingKnowledgeDuplicateFlaggedEventPublisher();
+        var (store, client) = await CreateAsync(duplicateFlaggedPublisher: duplicateFlaggedPublisher);
         var nodeId = Guid.NewGuid();
         var taxonomyOnlyId = Guid.NewGuid();
         await store.UpsertAsync(
@@ -443,13 +477,15 @@ public class KnowledgeManagementClientTests
         var duplicates = await client.FindDuplicatesAsync(nodeId, CancellationToken.None);
 
         Assert.DoesNotContain(duplicates, candidate => candidate.NodeId == taxonomyOnlyId);
+        Assert.Equal(0, duplicateFlaggedPublisher.CallCount);
     }
 
     [Fact]
     public async Task FindDuplicatesAsync_ExcludesCandidate_WhenOnlyDomainTagIsShared_NotTaxonomy()
     {
         var uniqueTag = $"test-tag-{Guid.NewGuid()}";
-        var (store, client) = await CreateAsync();
+        var duplicateFlaggedPublisher = new CapturingKnowledgeDuplicateFlaggedEventPublisher();
+        var (store, client) = await CreateAsync(duplicateFlaggedPublisher: duplicateFlaggedPublisher);
         var nodeId = Guid.NewGuid();
         var domainTagOnlyId = Guid.NewGuid();
         await store.UpsertAsync(
@@ -468,6 +504,7 @@ public class KnowledgeManagementClientTests
         var duplicates = await client.FindDuplicatesAsync(nodeId, CancellationToken.None);
 
         Assert.DoesNotContain(duplicates, candidate => candidate.NodeId == domainTagOnlyId);
+        Assert.Equal(0, duplicateFlaggedPublisher.CallCount);
     }
 
     private sealed class CapturingKnowledgeClassifiedEventPublisher : IKnowledgeClassifiedEventPublisher
