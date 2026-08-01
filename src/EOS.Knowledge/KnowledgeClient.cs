@@ -22,23 +22,31 @@ public sealed class KnowledgeClient(
         KnowledgeNodeType.Risk,
     ];
 
-    public Task UpdateAsync(
+    public async Task UpdateAsync(
         Guid nodeId,
         KnowledgeNodeType nodeType,
         string content,
         string[] domainTags,
         string[] evidenceRefs,
+        KnowledgeMetadata? metadata = null,
         CancellationToken cancellationToken = default)
     {
+        // KnowledgeGraphStore.UpsertAsync's UPDATE branch overwrites KnowledgeMetadataJson
+        // unconditionally, so a null `metadata` here must be resolved to the node's current
+        // metadata before upserting — otherwise an ordinary content-only update would silently
+        // erase any previously-assigned taxonomy/relationships.
+        var resolvedMetadata = metadata ?? (await store.GetByIdAsync(nodeId, cancellationToken))?.Metadata;
+
         var node = new KnowledgeNode(
             NodeId: nodeId,
             NodeType: nodeType,
             Content: content,
             DomainTags: domainTags,
             EvidenceRefs: evidenceRefs,
-            CreatedAt: DateTimeOffset.UtcNow);
+            CreatedAt: DateTimeOffset.UtcNow,
+            Metadata: resolvedMetadata);
 
-        return store.UpsertAsync(node, cancellationToken);
+        await store.UpsertAsync(node, cancellationToken);
     }
 
     public async Task<IEnumerable<KnowledgeNode>> QueryAsync(

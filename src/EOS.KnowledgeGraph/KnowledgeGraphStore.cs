@@ -21,8 +21,21 @@ public sealed class KnowledgeGraphStore(string connectionString)
                 EvidenceRefsJson NVARCHAR(MAX) NOT NULL,
                 CreatedAt DATETIMEOFFSET NOT NULL
             )
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('KnowledgeNode') AND name = 'KnowledgeMetadataJson')
+            ALTER TABLE KnowledgeNode ADD KnowledgeMetadataJson NVARCHAR(MAX) NULL
             """;
-        await command.ExecuteNonQueryAsync(cancellationToken);
+
+        try
+        {
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException ex) when (ex.Number is 2705 or 1913 or 2714)
+        {
+            // Benign race on the non-atomic IF NOT EXISTS guards above (identical class of
+            // issue already found and fixed for ArchivedContentStore, WP-016): a concurrent
+            // caller creating the same table/column/index loses the race but the object it
+            // wanted now exists regardless of who created it. 2705: duplicate column.
+        }
     }
 
     public async Task UpsertAsync(KnowledgeNode node, CancellationToken cancellationToken)
@@ -34,11 +47,11 @@ public sealed class KnowledgeGraphStore(string connectionString)
         command.CommandText = """
             IF EXISTS (SELECT 1 FROM KnowledgeNode WHERE NodeId = @NodeId)
                 UPDATE KnowledgeNode
-                SET NodeType = @NodeType, Content = @Content, DomainTagsJson = @DomainTagsJson, EvidenceRefsJson = @EvidenceRefsJson
+                SET NodeType = @NodeType, Content = @Content, DomainTagsJson = @DomainTagsJson, EvidenceRefsJson = @EvidenceRefsJson, KnowledgeMetadataJson = @KnowledgeMetadataJson
                 WHERE NodeId = @NodeId
             ELSE
-                INSERT INTO KnowledgeNode (NodeId, NodeType, Content, DomainTagsJson, EvidenceRefsJson, CreatedAt)
-                VALUES (@NodeId, @NodeType, @Content, @DomainTagsJson, @EvidenceRefsJson, @CreatedAt)
+                INSERT INTO KnowledgeNode (NodeId, NodeType, Content, DomainTagsJson, EvidenceRefsJson, CreatedAt, KnowledgeMetadataJson)
+                VALUES (@NodeId, @NodeType, @Content, @DomainTagsJson, @EvidenceRefsJson, @CreatedAt, @KnowledgeMetadataJson)
             """;
         command.Parameters.AddWithValue("@NodeId", node.NodeId);
         command.Parameters.AddWithValue("@NodeType", node.NodeType.ToString());
@@ -46,6 +59,9 @@ public sealed class KnowledgeGraphStore(string connectionString)
         command.Parameters.AddWithValue("@DomainTagsJson", JsonSerializer.Serialize(node.DomainTags));
         command.Parameters.AddWithValue("@EvidenceRefsJson", JsonSerializer.Serialize(node.EvidenceRefs));
         command.Parameters.AddWithValue("@CreatedAt", node.CreatedAt);
+        command.Parameters.AddWithValue(
+            "@KnowledgeMetadataJson",
+            node.Metadata is null ? DBNull.Value : JsonSerializer.Serialize(node.Metadata));
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -78,7 +94,7 @@ public sealed class KnowledgeGraphStore(string connectionString)
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT NodeId, NodeType, Content, DomainTagsJson, EvidenceRefsJson, CreatedAt
+            SELECT NodeId, NodeType, Content, DomainTagsJson, EvidenceRefsJson, CreatedAt, KnowledgeMetadataJson
             FROM KnowledgeNode
             WHERE NodeId = @NodeId
             """;
@@ -90,13 +106,7 @@ public sealed class KnowledgeGraphStore(string connectionString)
             return null;
         }
 
-        return new KnowledgeNode(
-            NodeId: reader.GetGuid(0),
-            NodeType: Enum.Parse<KnowledgeNodeType>(reader.GetString(1)),
-            Content: reader.GetString(2),
-            DomainTags: JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? [],
-            EvidenceRefs: JsonSerializer.Deserialize<string[]>(reader.GetString(4)) ?? [],
-            CreatedAt: reader.GetDateTimeOffset(5));
+        return ReadNode(reader);
     }
 
     public async Task<IReadOnlyList<KnowledgeNode>> QueryAsync(
@@ -117,7 +127,7 @@ public sealed class KnowledgeGraphStore(string connectionString)
 
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
-            SELECT NodeId, NodeType, Content, DomainTagsJson, EvidenceRefsJson, CreatedAt
+            SELECT NodeId, NodeType, Content, DomainTagsJson, EvidenceRefsJson, CreatedAt, KnowledgeMetadataJson
             FROM KnowledgeNode
             WHERE NodeType IN ({string.Join(", ", nodeTypeParameterNames)})
               AND (@CreatedFrom IS NULL OR CreatedAt >= @CreatedFrom)
@@ -136,15 +146,21 @@ public sealed class KnowledgeGraphStore(string connectionString)
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            results.Add(new KnowledgeNode(
-                NodeId: reader.GetGuid(0),
-                NodeType: Enum.Parse<KnowledgeNodeType>(reader.GetString(1)),
-                Content: reader.GetString(2),
-                DomainTags: JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? [],
-                EvidenceRefs: JsonSerializer.Deserialize<string[]>(reader.GetString(4)) ?? [],
-                CreatedAt: reader.GetDateTimeOffset(5)));
+            results.Add(ReadNode(reader));
         }
 
         return results;
+    }
+
+    private static KnowledgeNode ReadNode(SqlDataReader reader)
+    {
+        return new KnowledgeNode(
+            NodeId: reader.GetGuid(0),
+            NodeType: Enum.Parse<KnowledgeNodeType>(reader.GetString(1)),
+            Content: reader.GetString(2),
+            DomainTags: JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? [],
+            EvidenceRefs: JsonSerializer.Deserialize<string[]>(reader.GetString(4)) ?? [],
+            CreatedAt: reader.GetDateTimeOffset(5),
+            Metadata: reader.IsDBNull(6) ? null : JsonSerializer.Deserialize<KnowledgeMetadata>(reader.GetString(6)));
     }
 }

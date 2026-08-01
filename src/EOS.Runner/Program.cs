@@ -35,6 +35,7 @@ if (args is not ["ask", _] and not ["compress"])
 var providersOptions = loader.Load<ProvidersOptions>("Providers.json");
 var inferenceOptions = loader.Load<InferenceOptions>("Inference.json");
 var thresholdsOptions = loader.Load<ThresholdsOptions>("Thresholds.json");
+var knowledgeOptions = loader.Load<KnowledgeOptions>("Knowledge.json");
 
 var providerProfiles = providersOptions.Providers
     .Select(provider => new ProviderProfile(
@@ -134,6 +135,19 @@ try
         new EventMediatorMemoryConsolidatedEventPublisher(eventMediator));
 
     AutomaticConsolidationTriggerHandlers.RegisterSubscriptions(eventMediator, knowledgeClient);
+
+    // Real, independently tested infrastructure with no production caller yet — no WP before
+    // this one has a reason to classify a node or add a relationship in the "ask" path.
+    var knowledgeManagementClient = new KnowledgeManagementClient(
+        knowledgeGraphStore,
+        knowledgeClient,
+        new OntologyValidator(
+            knowledgeGraphStore,
+            knowledgeOptions.DependsOnDisallowedTargetTypes.Select(Enum.Parse<KnowledgeNodeType>).ToList(),
+            knowledgeOptions.GovernanceApprovalRequiredRelationshipTypes.Select(Enum.Parse<RelationshipType>).ToList()),
+        new EventMediatorKnowledgeClassifiedEventPublisher(eventMediator),
+        new EventMediatorKnowledgeRelationshipAddedEventPublisher(eventMediator));
+    _ = knowledgeManagementClient;
 
     var archivedContentStore = new ArchivedContentStore(connectionOptions.SqlServerConnectionString);
     await archivedContentStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -289,6 +303,34 @@ internal sealed class EventMediatorMemoryCompressedEventPublisher(EventMediator 
             version: "v1",
             producer: "EOS.Knowledge",
             payload: new MemoryCompressedPayload(entryId, originalSize, summarySize)));
+    }
+}
+
+internal sealed record KnowledgeClassifiedPayload(Guid NodeId, TaxonomyClassification TaxonomyType);
+
+internal sealed class EventMediatorKnowledgeClassifiedEventPublisher(EventMediator eventMediator) : IKnowledgeClassifiedEventPublisher
+{
+    public void PublishKnowledgeClassified(Guid nodeId, TaxonomyClassification taxonomyType)
+    {
+        eventMediator.Publish(EventEnvelope<KnowledgeClassifiedPayload>.Create(
+            eventType: "KnowledgeClassified",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new KnowledgeClassifiedPayload(nodeId, taxonomyType)));
+    }
+}
+
+internal sealed record KnowledgeRelationshipAddedPayload(Guid SourceNodeId, Guid TargetNodeId, RelationshipType RelationshipType);
+
+internal sealed class EventMediatorKnowledgeRelationshipAddedEventPublisher(EventMediator eventMediator) : IKnowledgeRelationshipAddedEventPublisher
+{
+    public void PublishKnowledgeRelationshipAdded(Guid sourceNodeId, Guid targetNodeId, RelationshipType relationshipType)
+    {
+        eventMediator.Publish(EventEnvelope<KnowledgeRelationshipAddedPayload>.Create(
+            eventType: "KnowledgeRelationshipAdded",
+            version: "v1",
+            producer: "EOS.Knowledge",
+            payload: new KnowledgeRelationshipAddedPayload(sourceNodeId, targetNodeId, relationshipType)));
     }
 }
 

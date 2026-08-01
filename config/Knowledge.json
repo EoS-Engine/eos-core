@@ -1,3 +1,5 @@
 {
-  "vectorStoreCollection": "eos-knowledge"
+  "vectorStoreCollection": "eos-knowledge",
+  "dependsOnDisallowedTargetTypes": ["Lesson"],
+  "governanceApprovalRequiredRelationshipTypes": ["Replaces", "Supersedes"]
 }

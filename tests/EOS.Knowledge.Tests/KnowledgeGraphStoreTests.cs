@@ -91,6 +91,50 @@ public class KnowledgeGraphStoreTests
     }
 
     [Fact]
+    public async Task UpsertAsync_ThenGetByIdAsync_RoundTripsKnowledgeMetadata()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var nodeId = Guid.NewGuid();
+        var targetNodeId = Guid.NewGuid();
+        var node = CreateNode(nodeId) with
+        {
+            Metadata = new KnowledgeMetadata
+            {
+                Taxonomy = TaxonomyClassification.Facts,
+                Relationships =
+                [
+                    new RelationshipEdge { TargetNodeId = targetNodeId, RelationshipType = RelationshipType.Supports },
+                ],
+            },
+        };
+
+        await store.UpsertAsync(node, CancellationToken.None);
+        var persisted = await store.GetByIdAsync(nodeId, CancellationToken.None);
+
+        Assert.NotNull(persisted);
+        Assert.NotNull(persisted.Metadata);
+        Assert.Equal(TaxonomyClassification.Facts, persisted.Metadata.Taxonomy);
+        Assert.Single(persisted.Metadata.Relationships);
+        Assert.Equal(targetNodeId, persisted.Metadata.Relationships[0].TargetNodeId);
+        Assert.Equal(RelationshipType.Supports, persisted.Metadata.Relationships[0].RelationshipType);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_ThenGetByIdAsync_RoundTripsNullMetadata_WhenNeverSet()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var node = CreateNode(Guid.NewGuid());
+
+        await store.UpsertAsync(node, CancellationToken.None);
+        var persisted = await store.GetByIdAsync(node.NodeId, CancellationToken.None);
+
+        Assert.NotNull(persisted);
+        Assert.Null(persisted.Metadata);
+    }
+
+    [Fact]
     public async Task QueryAsync_ReturnsEmpty_WhenNodeTypesIsEmpty()
     {
         var store = new KnowledgeGraphStore(ConnectionString);

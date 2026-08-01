@@ -4,12 +4,21 @@ namespace EOS.Knowledge;
 
 public interface IKnowledgeClient
 {
+    /// <summary>
+    /// <paramref name="metadata"/> carries Knowledge-Management-Specification-v1.0 §10.9's
+    /// <c>knowledge_metadata</c> (WP-017: <c>taxonomy</c>/<c>relationships</c> only) — per
+    /// FR-KM1, this is the only write path Knowledge Management's <c>classify()</c>/relationship
+    /// mutations are permitted to use ("read/write via Memory's <c>IKnowledgeClient.update()</c>,
+    /// never a direct store write"). <see langword="null"/> (the default) leaves the node's
+    /// existing metadata untouched.
+    /// </summary>
     Task UpdateAsync(
         Guid nodeId,
         KnowledgeNodeType nodeType,
         string content,
         string[] domainTags,
         string[] evidenceRefs,
+        KnowledgeMetadata? metadata = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

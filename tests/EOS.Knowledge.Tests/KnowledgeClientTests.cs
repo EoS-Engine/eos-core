@@ -31,7 +31,7 @@ public class KnowledgeClientTests
             "The vertical slice's interaction",
             ["backend"],
             ["artifact://evidence/1"],
-            CancellationToken.None);
+            cancellationToken: CancellationToken.None);
 
         var persisted = await store.GetByIdAsync(nodeId, CancellationToken.None);
 
@@ -52,11 +52,33 @@ public class KnowledgeClientTests
             store, DefaultRankingWeights, new ChromaVectorStore(ChromaDbEndpoint), NeverCalledMemorySourceStore.Instance);
         var nodeId = Guid.NewGuid();
 
-        await client.UpdateAsync(nodeId, KnowledgeNodeType.Fact, "first", [], [], CancellationToken.None);
-        await client.UpdateAsync(nodeId, KnowledgeNodeType.Fact, "second", [], [], CancellationToken.None);
+        await client.UpdateAsync(nodeId, KnowledgeNodeType.Fact, "first", [], [], cancellationToken: CancellationToken.None);
+        await client.UpdateAsync(nodeId, KnowledgeNodeType.Fact, "second", [], [], cancellationToken: CancellationToken.None);
         var persisted = await store.GetByIdAsync(nodeId, CancellationToken.None);
 
         Assert.NotNull(persisted);
         Assert.Equal("second", persisted.Content);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_PreservesExistingMetadata_WhenCalledAgainWithoutSpecifyingIt()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        IKnowledgeClient client = new KnowledgeClient(
+            store, DefaultRankingWeights, new ChromaVectorStore(ChromaDbEndpoint), NeverCalledMemorySourceStore.Instance);
+        var nodeId = Guid.NewGuid();
+        var metadata = new KnowledgeMetadata { Taxonomy = TaxonomyClassification.Facts };
+
+        await client.UpdateAsync(
+            nodeId, KnowledgeNodeType.Fact, "first", [], [], metadata, CancellationToken.None);
+        await client.UpdateAsync(
+            nodeId, KnowledgeNodeType.Fact, "second", [], [], cancellationToken: CancellationToken.None);
+        var persisted = await store.GetByIdAsync(nodeId, CancellationToken.None);
+
+        Assert.NotNull(persisted);
+        Assert.Equal("second", persisted.Content);
+        Assert.NotNull(persisted.Metadata);
+        Assert.Equal(TaxonomyClassification.Facts, persisted.Metadata.Taxonomy);
     }
 }
