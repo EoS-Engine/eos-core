@@ -1,4 +1,5 @@
 using EOS.KnowledgeGraph;
+using Microsoft.Data.SqlClient;
 
 namespace EOS.Knowledge.Tests;
 
@@ -132,6 +133,37 @@ public class KnowledgeGraphStoreTests
 
         Assert.NotNull(persisted);
         Assert.Null(persisted.Metadata);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_PersistsTaxonomyAndRelationshipType_AsStringNames_NotNumericOrdinals()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var nodeId = Guid.NewGuid();
+        var node = CreateNode(nodeId) with
+        {
+            Metadata = new KnowledgeMetadata
+            {
+                Taxonomy = TaxonomyClassification.Facts,
+                Relationships =
+                [
+                    new RelationshipEdge { TargetNodeId = Guid.NewGuid(), RelationshipType = RelationshipType.Supports },
+                ],
+            },
+        };
+        await store.UpsertAsync(node, CancellationToken.None);
+
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT KnowledgeMetadataJson FROM KnowledgeNode WHERE NodeId = @NodeId";
+        command.Parameters.AddWithValue("@NodeId", nodeId);
+        var rawJson = (string)(await command.ExecuteScalarAsync(CancellationToken.None))!;
+
+        Assert.Contains("\"Facts\"", rawJson);
+        Assert.Contains("\"Supports\"", rawJson);
+        Assert.DoesNotContain("\"taxonomy\":0", rawJson.Replace(" ", ""));
     }
 
     [Fact]

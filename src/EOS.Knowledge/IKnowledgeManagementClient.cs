@@ -26,8 +26,11 @@ public interface IKnowledgeManagementClient
     /// <summary>
     /// Adds a typed Relationship edge (§14) from <paramref name="sourceNodeId"/>. Validated
     /// against §14's Ontology constraints (<see cref="OntologyValidator"/>) before persisting —
-    /// throws <see cref="ArgumentException"/> if the edge violates one, or if either node does
-    /// not exist.
+    /// throws <see cref="ArgumentException"/> if the edge violates one, or if
+    /// <paramref name="sourceNodeId"/> does not resolve to an existing node. Target-node
+    /// existence is enforced only where §14's table states it (currently
+    /// <see cref="RelationshipType.Requires"/> only) — <see cref="OntologyValidator"/>'s own
+    /// documentation lists exactly which relationship types require it.
     /// </summary>
     Task AddRelationshipAsync(Guid sourceNodeId, RelationshipEdge edge, CancellationToken cancellationToken = default);
 

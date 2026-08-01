@@ -1,10 +1,19 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Data.SqlClient;
 
 namespace EOS.KnowledgeGraph;
 
 public sealed class KnowledgeGraphStore(string connectionString)
 {
+    // TaxonomyClassification/RelationshipType (EOS.KnowledgeGraph) are persisted by name, not
+    // ordinal — a future reordering or insertion of enum members must never silently reinterpret
+    // already-persisted KnowledgeMetadataJson rows.
+    private static readonly JsonSerializerOptions MetadataSerializerOptions = new()
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
+
     public async Task EnsureTableExistsAsync(CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(connectionString);
@@ -61,7 +70,7 @@ public sealed class KnowledgeGraphStore(string connectionString)
         command.Parameters.AddWithValue("@CreatedAt", node.CreatedAt);
         command.Parameters.AddWithValue(
             "@KnowledgeMetadataJson",
-            node.Metadata is null ? DBNull.Value : JsonSerializer.Serialize(node.Metadata));
+            node.Metadata is null ? DBNull.Value : JsonSerializer.Serialize(node.Metadata, MetadataSerializerOptions));
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -161,6 +170,8 @@ public sealed class KnowledgeGraphStore(string connectionString)
             DomainTags: JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? [],
             EvidenceRefs: JsonSerializer.Deserialize<string[]>(reader.GetString(4)) ?? [],
             CreatedAt: reader.GetDateTimeOffset(5),
-            Metadata: reader.IsDBNull(6) ? null : JsonSerializer.Deserialize<KnowledgeMetadata>(reader.GetString(6)));
+            Metadata: reader.IsDBNull(6)
+                ? null
+                : JsonSerializer.Deserialize<KnowledgeMetadata>(reader.GetString(6), MetadataSerializerOptions));
     }
 }
