@@ -11,8 +11,23 @@ namespace EOS.Knowledge;
 /// is the minimal, standard concrete form). <paramref name="typeWeights"/> parameterizes
 /// <c>type_weight</c>; a taxonomy absent from the map uses a neutral 1.0 weight.
 /// </summary>
-public sealed class FreshnessCalculator(double decayHalfLifeDays, IReadOnlyDictionary<TaxonomyClassification, double> typeWeights)
+public sealed class FreshnessCalculator
 {
+    private readonly double decayHalfLifeDays;
+    private readonly IReadOnlyDictionary<TaxonomyClassification, double> typeWeights;
+
+    public FreshnessCalculator(double decayHalfLifeDays, IReadOnlyDictionary<TaxonomyClassification, double> typeWeights)
+    {
+        if (!double.IsFinite(decayHalfLifeDays) || decayHalfLifeDays <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(decayHalfLifeDays), decayHalfLifeDays, "Decay half-life must be a finite value greater than zero.");
+        }
+
+        this.decayHalfLifeDays = decayHalfLifeDays;
+        this.typeWeights = typeWeights;
+    }
+
     public double Calculate(DateTimeOffset? lastValidation, TaxonomyClassification? taxonomy, DateTimeOffset now)
     {
         if (lastValidation is null)

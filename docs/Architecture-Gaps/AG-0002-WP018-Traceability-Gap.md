@@ -27,7 +27,7 @@ No interface signature, adapter shape, or subscriber mechanism is given for this
 | Document | Section | Exact Quote |
 |---|---|---|
 | Knowledge-Management-Specification-v1.0.md | §13 | "Reusability \| Derived from Knowledge Reuse's own discovery/recommendation frequency (§18.2) \| Computed by Knowledge Management from its own Reuse Engine's activity log" |
-| Knowledge-Management-Specification-v1.0.md | §15.7 | "km_score(item) = q1 * item.quality.confidence + q2 * item.quality.reliability + q3 * relationship_relevance(item, request.relationship_context) - q4 * deprecation_penalty(item.lifecycle_state)" (no Reusability term, no recording step) |
+| Knowledge-Management-Specification-v1.0.md | §15.7 | "km_score(item) = q1 \* item.quality.confidence + q2 \* item.quality.reliability + q3 \* relationship_relevance(item, request.relationship_context) - q4 \* deprecation_penalty(item.lifecycle_state)" (no Reusability term, no recording step) |
 | Knowledge-Management-Specification-v1.0.md | §18.1 | "The general capability of finding existing knowledge relevant to a new need — realized entirely through Search Strategy (§15), not a separate mechanism." |
 | Knowledge-Management-Specification-v1.0.md | §18.2 | "implemented as a standing query pattern... rather than a new inference mechanism; it is Search Strategy (§15) invoked proactively rather than reactively." |
 | Knowledge-Management-Specification-v1.0.md | §19.1 | "`DecisionMade` (Reasoning-Engine-Specification-v1.0 §17) — where a Decision's evidence references a knowledge object, its `Engineering Impact`/`Reliability` Quality attributes (§13) are updated." |
@@ -59,9 +59,9 @@ No row in the Traceability Matrix assigns implementation of a Reusability activi
 `docs/Development-Workflow.md` establishes which document governs implementation scope:
 
 > "`docs/EOS-Implementation-Roadmap-v1.0.md` remains the single source of truth for Work Package scope and sequencing." (line 7)
-
+>
 > "**Frozen Roadmap.** `docs/EOS-Implementation-Roadmap-v1.0.md` defines WP scope and sequencing. A WP's plan may narrow ambiguity within its own row; it does not expand scope beyond it." (line 31)
-
+>
 > "**No Scope Creep.** Anything discovered during implementation that belongs to a different WP is deferred and explicitly recorded, not absorbed into the current one." (line 36)
 
 Both findings describe capabilities the Specification names but that the Roadmap and Traceability Matrix do not assign to WP-018, to any other specific Work Package, or to an explicit future deferral (unlike `compare()`, which carries explicit deferral text in the same WP-018 roadmap row). This is a discrepancy between the Specification's descriptive text and the Roadmap's binding scope assignment.

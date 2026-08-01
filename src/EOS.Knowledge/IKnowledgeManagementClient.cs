@@ -49,8 +49,11 @@ public interface IKnowledgeManagementClient
     /// <see cref="QualityProfile.Completeness"/> and <see cref="QualityProfile.Freshness"/> are
     /// recomputed live (the two attributes Knowledge Management itself owns, §13); every other
     /// attribute is the last value recorded from its owning subsystem (FR-KM9) — never
-    /// recomputed here. Returns <see langword="null"/> if <paramref name="nodeId"/> does not
-    /// resolve to an existing node.
+    /// recomputed here. The freshly-computed profile is persisted back via
+    /// <see cref="IKnowledgeClient.UpdateAsync"/> and publishes <c>KnowledgeQualityUpdated</c>
+    /// on every call; <c>KnowledgeFreshnessExpired</c> publishes only on the transition into an
+    /// expired state, not on every subsequent call while a node remains stale. Returns
+    /// <see langword="null"/> if <paramref name="nodeId"/> does not resolve to an existing node.
     /// </summary>
     Task<QualityProfile?> GetQualityAsync(Guid nodeId, CancellationToken cancellationToken = default);
 

@@ -237,6 +237,23 @@ public class KnowledgeManagementClientTests
     }
 
     [Fact]
+    public async Task GetQualityAsync_DoesNotRepublishFreshnessExpired_OnASecondCallWhileStillStale()
+    {
+        var freshnessExpiredPublisher = new CapturingKnowledgeFreshnessExpiredEventPublisher();
+        var (store, client) = await CreateAsync(
+            freshnessExpiredPublisher: freshnessExpiredPublisher, freshnessExpirationThreshold: 0.5);
+        var nodeId = Guid.NewGuid();
+        await store.UpsertAsync(
+            new KnowledgeNode(nodeId, KnowledgeNodeType.Fact, "a fact", [], [], DateTimeOffset.UtcNow),
+            CancellationToken.None);
+
+        await client.GetQualityAsync(nodeId, CancellationToken.None);
+        await client.GetQualityAsync(nodeId, CancellationToken.None);
+
+        Assert.Equal(1, freshnessExpiredPublisher.CallCount);
+    }
+
+    [Fact]
     public async Task SearchAsync_RanksHigherConfidenceItemFirst_WhenWeightingIsIndependent()
     {
         var (store, client) = await CreateAsync();
@@ -403,6 +420,56 @@ public class KnowledgeManagementClientTests
         Assert.DoesNotContain(duplicates, candidate => candidate.NodeId == unrelatedId);
     }
 
+    [Fact]
+    public async Task FindDuplicatesAsync_ExcludesCandidate_WhenOnlyTaxonomyIsShared_NotDomainTag()
+    {
+        var uniqueTag = $"test-tag-{Guid.NewGuid()}";
+        var (store, client) = await CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var taxonomyOnlyId = Guid.NewGuid();
+        await store.UpsertAsync(
+            new KnowledgeNode(nodeId, KnowledgeNodeType.Fact, "original", [uniqueTag], [], DateTimeOffset.UtcNow)
+            {
+                Metadata = new KnowledgeMetadata { Taxonomy = TaxonomyClassification.Facts },
+            },
+            CancellationToken.None);
+        await store.UpsertAsync(
+            new KnowledgeNode(taxonomyOnlyId, KnowledgeNodeType.Fact, "shares taxonomy only", ["mobile"], [], DateTimeOffset.UtcNow)
+            {
+                Metadata = new KnowledgeMetadata { Taxonomy = TaxonomyClassification.Facts },
+            },
+            CancellationToken.None);
+
+        var duplicates = await client.FindDuplicatesAsync(nodeId, CancellationToken.None);
+
+        Assert.DoesNotContain(duplicates, candidate => candidate.NodeId == taxonomyOnlyId);
+    }
+
+    [Fact]
+    public async Task FindDuplicatesAsync_ExcludesCandidate_WhenOnlyDomainTagIsShared_NotTaxonomy()
+    {
+        var uniqueTag = $"test-tag-{Guid.NewGuid()}";
+        var (store, client) = await CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var domainTagOnlyId = Guid.NewGuid();
+        await store.UpsertAsync(
+            new KnowledgeNode(nodeId, KnowledgeNodeType.Fact, "original", [uniqueTag], [], DateTimeOffset.UtcNow)
+            {
+                Metadata = new KnowledgeMetadata { Taxonomy = TaxonomyClassification.Facts },
+            },
+            CancellationToken.None);
+        await store.UpsertAsync(
+            new KnowledgeNode(domainTagOnlyId, KnowledgeNodeType.Fact, "shares domain tag only", [uniqueTag], [], DateTimeOffset.UtcNow)
+            {
+                Metadata = new KnowledgeMetadata { Taxonomy = TaxonomyClassification.Patterns },
+            },
+            CancellationToken.None);
+
+        var duplicates = await client.FindDuplicatesAsync(nodeId, CancellationToken.None);
+
+        Assert.DoesNotContain(duplicates, candidate => candidate.NodeId == domainTagOnlyId);
+    }
+
     private sealed class CapturingKnowledgeClassifiedEventPublisher : IKnowledgeClassifiedEventPublisher
     {
         public Guid? LastNodeId { get; private set; }
@@ -477,10 +544,13 @@ public class KnowledgeManagementClientTests
 
         public double? LastFreshnessScore { get; private set; }
 
+        public int CallCount { get; private set; }
+
         public void PublishKnowledgeFreshnessExpired(Guid nodeId, double freshnessScore)
         {
             LastNodeId = nodeId;
             LastFreshnessScore = freshnessScore;
+            CallCount++;
         }
     }
 

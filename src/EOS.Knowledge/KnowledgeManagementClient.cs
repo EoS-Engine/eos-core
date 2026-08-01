@@ -96,6 +96,7 @@ public sealed class KnowledgeManagementClient(
         var completeness = ComputeCompleteness(node.Metadata);
         var freshness = freshnessCalculator.Calculate(
             node.Metadata?.LastValidation, node.Metadata?.Taxonomy, DateTimeOffset.UtcNow);
+        var wasAlreadyExpired = node.Metadata?.Quality?.Freshness < freshnessExpirationThreshold;
 
         var quality = (node.Metadata?.Quality ?? new QualityProfile()) with
         {
@@ -110,7 +111,10 @@ public sealed class KnowledgeManagementClient(
 
         knowledgeQualityUpdatedEventPublisher?.PublishKnowledgeQualityUpdated(nodeId, quality);
 
-        if (freshness < freshnessExpirationThreshold)
+        // §19: KnowledgeFreshnessExpired's consumer is the Revalidation queue — fire only on the
+        // transition into the expired state, not on every subsequent read while still expired
+        // (CodeRabbit PR #15).
+        if (freshness < freshnessExpirationThreshold && !wasAlreadyExpired)
         {
             knowledgeFreshnessExpiredEventPublisher?.PublishKnowledgeFreshnessExpired(nodeId, freshness);
         }

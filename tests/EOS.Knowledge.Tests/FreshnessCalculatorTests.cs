@@ -38,4 +38,15 @@ public class FreshnessCalculatorTests
         Assert.Equal(2.0, weighted);
         Assert.Equal(1.0, unweighted);
     }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(-1.0)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Constructor_Throws_ForNonFiniteOrNonPositiveHalfLife(double invalidHalfLifeDays)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new FreshnessCalculator(invalidHalfLifeDays, new Dictionary<TaxonomyClassification, double>()));
+    }
 }
