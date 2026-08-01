@@ -6,4 +6,5 @@ public sealed record KnowledgeNode(
     string Content,
     string[] DomainTags,
     string[] EvidenceRefs,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    KnowledgeMetadata? Metadata = null);

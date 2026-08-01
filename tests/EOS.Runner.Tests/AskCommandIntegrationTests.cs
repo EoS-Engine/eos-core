@@ -89,7 +89,7 @@ public class AskCommandIntegrationTests
 
         public Task UpdateAsync(
             Guid nodeId, KnowledgeNodeType nodeType, string content, string[] domainTags, string[] evidenceRefs,
-            CancellationToken cancellationToken = default)
+            KnowledgeMetadata? metadata = null, CancellationToken cancellationToken = default)
         {
             throw new InvalidOperationException("Should not be called for an empty/whitespace request.");
         }
@@ -144,10 +144,10 @@ public class AskCommandIntegrationTests
 
         public Task UpdateAsync(
             Guid nodeId, KnowledgeNodeType nodeType, string content, string[] domainTags, string[] evidenceRefs,
-            CancellationToken cancellationToken = default)
+            KnowledgeMetadata? metadata = null, CancellationToken cancellationToken = default)
         {
             LastUpdatedNodeId = nodeId;
-            return inner.UpdateAsync(nodeId, nodeType, content, domainTags, evidenceRefs, cancellationToken);
+            return inner.UpdateAsync(nodeId, nodeType, content, domainTags, evidenceRefs, metadata, cancellationToken);
         }
 
         public Task<IEnumerable<KnowledgeNode>> QueryAsync(

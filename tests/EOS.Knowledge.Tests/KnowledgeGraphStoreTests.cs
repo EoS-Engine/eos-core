@@ -1,4 +1,6 @@
+using System.Text.Json;
 using EOS.KnowledgeGraph;
+using Microsoft.Data.SqlClient;
 
 namespace EOS.Knowledge.Tests;
 
@@ -88,6 +90,82 @@ public class KnowledgeGraphStoreTests
         var result = await store.GetByIdAsync(Guid.NewGuid(), CancellationToken.None);
 
         Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_ThenGetByIdAsync_RoundTripsKnowledgeMetadata()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var nodeId = Guid.NewGuid();
+        var targetNodeId = Guid.NewGuid();
+        var node = CreateNode(nodeId) with
+        {
+            Metadata = new KnowledgeMetadata
+            {
+                Taxonomy = TaxonomyClassification.Facts,
+                Relationships =
+                [
+                    new RelationshipEdge { TargetNodeId = targetNodeId, RelationshipType = RelationshipType.Supports },
+                ],
+            },
+        };
+
+        await store.UpsertAsync(node, CancellationToken.None);
+        var persisted = await store.GetByIdAsync(nodeId, CancellationToken.None);
+
+        Assert.NotNull(persisted);
+        Assert.NotNull(persisted.Metadata);
+        Assert.Equal(TaxonomyClassification.Facts, persisted.Metadata.Taxonomy);
+        Assert.Single(persisted.Metadata.Relationships);
+        Assert.Equal(targetNodeId, persisted.Metadata.Relationships[0].TargetNodeId);
+        Assert.Equal(RelationshipType.Supports, persisted.Metadata.Relationships[0].RelationshipType);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_ThenGetByIdAsync_RoundTripsNullMetadata_WhenNeverSet()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var node = CreateNode(Guid.NewGuid());
+
+        await store.UpsertAsync(node, CancellationToken.None);
+        var persisted = await store.GetByIdAsync(node.NodeId, CancellationToken.None);
+
+        Assert.NotNull(persisted);
+        Assert.Null(persisted.Metadata);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_PersistsTaxonomyAndRelationshipType_AsStringNames_NotNumericOrdinals()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var nodeId = Guid.NewGuid();
+        var node = CreateNode(nodeId) with
+        {
+            Metadata = new KnowledgeMetadata
+            {
+                Taxonomy = TaxonomyClassification.Facts,
+                Relationships =
+                [
+                    new RelationshipEdge { TargetNodeId = Guid.NewGuid(), RelationshipType = RelationshipType.Supports },
+                ],
+            },
+        };
+        await store.UpsertAsync(node, CancellationToken.None);
+
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync(CancellationToken.None);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT KnowledgeMetadataJson FROM KnowledgeNode WHERE NodeId = @NodeId";
+        command.Parameters.AddWithValue("@NodeId", nodeId);
+        var rawJson = (string)(await command.ExecuteScalarAsync(CancellationToken.None))!;
+
+        using var document = JsonDocument.Parse(rawJson);
+        var root = document.RootElement;
+        Assert.Equal("Facts", root.GetProperty("Taxonomy").GetString());
+        Assert.Equal("Supports", root.GetProperty("Relationships")[0].GetProperty("RelationshipType").GetString());
     }
 
     [Fact]
