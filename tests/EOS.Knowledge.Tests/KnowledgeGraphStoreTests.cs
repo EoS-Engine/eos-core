@@ -1,3 +1,4 @@
+using System.Text.Json;
 using EOS.KnowledgeGraph;
 using Microsoft.Data.SqlClient;
 
@@ -161,9 +162,10 @@ public class KnowledgeGraphStoreTests
         command.Parameters.AddWithValue("@NodeId", nodeId);
         var rawJson = (string)(await command.ExecuteScalarAsync(CancellationToken.None))!;
 
-        Assert.Contains("\"Facts\"", rawJson);
-        Assert.Contains("\"Supports\"", rawJson);
-        Assert.DoesNotContain("\"taxonomy\":0", rawJson.Replace(" ", ""));
+        using var document = JsonDocument.Parse(rawJson);
+        var root = document.RootElement;
+        Assert.Equal("Facts", root.GetProperty("Taxonomy").GetString());
+        Assert.Equal("Supports", root.GetProperty("Relationships")[0].GetProperty("RelationshipType").GetString());
     }
 
     [Fact]
