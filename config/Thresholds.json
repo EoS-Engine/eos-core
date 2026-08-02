@@ -16,5 +16,7 @@
   "rankingAccessFrequencyWeight": 0.1,
   "shortTermMemoryExpirationSeconds": 3600,
   "sessionMemoryIdleTimeoutSeconds": 1800,
-  "summarizationStubTruncationLength": 200
+  "summarizationStubTruncationLength": 200,
+  "reasoningContextExpansionCap": 1,
+  "reasoningLowConfidenceFloor": 0.3
 }
