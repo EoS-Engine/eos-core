@@ -1,4 +1,5 @@
 using EOS.AIProvider;
+using EOS.Contracts;
 using EOS.Gates;
 using EOS.Infrastructure;
 using EOS.Knowledge;
@@ -25,7 +26,14 @@ public class AskCommandIntegrationTests
         using var httpClient = new HttpClient { BaseAddress = new Uri(ollamaEndpoint) };
         var aiProviderClient = new OllamaProviderAdapter(
             httpClient, inferenceOptions.DefaultModel, inferenceOptions.MaxTokens, inferenceOptions.Temperature);
-        var reasoningEngine = new ReasoningEngine(aiProviderClient);
+        var reasoningEngine = new ReasoningEngine(
+            aiProviderClient,
+            NeverCalledContextAcquisitionProvider.Instance,
+            new ReasoningEngineOptions(ContextExpansionCap: 1, LowConfidenceFloor: 0.3),
+            new NoOpDecisionMadeEventPublisher(),
+            new NoOpLowConfidenceDecisionFlaggedEventPublisher(),
+            new NoOpContextExpansionRequestedEventPublisher(),
+            NullLogger<ReasoningEngine>.Instance);
         var protectionGate = new ProtectionGate(
             new PolicyEngine([], [], [], []), new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
             new EmergencyShutdownState(),
@@ -59,7 +67,14 @@ public class AskCommandIntegrationTests
     [Fact]
     public async Task ExecuteAsync_ReturnsNonZero_WhenTextIsEmpty()
     {
-        var reasoningEngine = new ReasoningEngine(NeverCalledAIProviderClient.Instance);
+        var reasoningEngine = new ReasoningEngine(
+            NeverCalledAIProviderClient.Instance,
+            NeverCalledContextAcquisitionProvider.Instance,
+            new ReasoningEngineOptions(ContextExpansionCap: 1, LowConfidenceFloor: 0.3),
+            new NoOpDecisionMadeEventPublisher(),
+            new NoOpLowConfidenceDecisionFlaggedEventPublisher(),
+            new NoOpContextExpansionRequestedEventPublisher(),
+            NullLogger<ReasoningEngine>.Instance);
         var protectionGate = new ProtectionGate(
             new PolicyEngine([], [], [], []), new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
             new EmergencyShutdownState(),
@@ -80,6 +95,38 @@ public class AskCommandIntegrationTests
         public Task<EOS.SDK.InferenceResult> InferAsync(EOS.SDK.InferenceRequest request, CancellationToken cancellationToken = default)
         {
             throw new InvalidOperationException("Should not be called for an empty/whitespace request.");
+        }
+    }
+
+    private sealed class NeverCalledContextAcquisitionProvider : IContextAcquisitionProvider
+    {
+        public static readonly NeverCalledContextAcquisitionProvider Instance = new();
+
+        public Task<AcquiredContext> AcquireContextAsync(
+            ReasoningContextScope scope, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Should not be called when ReasoningRequest.ContextScope is null.");
+        }
+    }
+
+    private sealed class NoOpDecisionMadeEventPublisher : IDecisionMadeEventPublisher
+    {
+        public void PublishDecisionMade(Guid decisionId, Guid requestId, double confidence, double riskScore, ReasoningType reasoningTypeApplied)
+        {
+        }
+    }
+
+    private sealed class NoOpLowConfidenceDecisionFlaggedEventPublisher : ILowConfidenceDecisionFlaggedEventPublisher
+    {
+        public void PublishLowConfidenceDecisionFlagged(Guid decisionId, Guid correlationId, double confidence, double threshold)
+        {
+        }
+    }
+
+    private sealed class NoOpContextExpansionRequestedEventPublisher : IContextExpansionRequestedEventPublisher
+    {
+        public void PublishContextExpansionRequested(Guid requestId, ReasoningContextScope originalScope, ReasoningContextScope expandedScope)
+        {
         }
     }
 
