@@ -82,7 +82,6 @@ try
         adapters,
         new LoggerProviderEventLogger(host.Services.GetRequiredService<ILogger<AIProviderManager>>()),
         providerRegistry: providerRegistry);
-    var reasoningEngine = new ReasoningEngine(aiProviderClient);
     var embeddingGenerator = new AIProviderEmbeddingGenerator(aiProviderClient);
 
     var securityOptions = loader.Load<SecurityOptions>("Security.json");
@@ -135,6 +134,17 @@ try
         new EventMediatorMemoryConsolidatedEventPublisher(eventMediator));
 
     AutomaticConsolidationTriggerHandlers.RegisterSubscriptions(eventMediator, knowledgeClient);
+
+    var reasoningEngine = new ReasoningEngine(
+        aiProviderClient,
+        new KnowledgeContextAcquisitionProvider(knowledgeClient),
+        new ReasoningEngineOptions(
+            ContextExpansionCap: thresholdsOptions.ReasoningContextExpansionCap,
+            LowConfidenceFloor: thresholdsOptions.ReasoningLowConfidenceFloor),
+        new EventMediatorDecisionMadeEventPublisher(eventMediator),
+        new EventMediatorLowConfidenceDecisionFlaggedEventPublisher(eventMediator),
+        new EventMediatorContextExpansionRequestedEventPublisher(eventMediator),
+        host.Services.GetRequiredService<ILogger<ReasoningEngine>>());
 
     // Real, independently tested infrastructure with no production caller yet — no WP before
     // this one has a reason to classify a node or add a relationship in the "ask" path.
@@ -230,6 +240,40 @@ internal sealed class AIProviderEmbeddingGenerator(IEmbeddingProviderClient embe
     }
 }
 
+/// <summary>
+/// WP-019 Slice 3's Composition Root Adapter (<see cref="IContextAcquisitionProvider"/>,
+/// Implementation Plan Revision 3 Area 1): translates <see cref="ReasoningContextScope"/> to
+/// <see cref="ContextRequest"/> and calls <see cref="IKnowledgeClient.AssembleContextAsync"/> —
+/// the only legal path, since <c>EOS.Reasoning</c> itself cannot reference <c>EOS.Knowledge</c>
+/// (Constitution Part 1 §1.2). <c>ProjectScope</c> carries <see cref="ReasoningContextScope.ProjectScope"/>
+/// when supplied, else <see cref="ReasoningContextScope.DomainTags"/> — §13.2 names both fields,
+/// but <see cref="ContextRequest"/>'s current shape has one project-scope filter slot for them.
+/// <c>2048</c> mirrors this file's own existing default inference token budget when
+/// <see cref="ReasoningContextScope.Budget"/> is unspecified.
+/// </summary>
+internal sealed class KnowledgeContextAcquisitionProvider(IKnowledgeClient knowledgeClient) : IContextAcquisitionProvider
+{
+    public async Task<AcquiredContext> AcquireContextAsync(
+        ReasoningContextScope scope, CancellationToken cancellationToken = default)
+    {
+        var contextRequest = new ContextRequest(
+            TokenOrSizeBudget: scope.Budget ?? 2048,
+            IncludesWorking: false,
+            IncludesShortTerm: false,
+            IncludesEpisodic: true,
+            IncludesSemantic: true,
+            ProjectScope: scope.ProjectScope ?? scope.DomainTags,
+            Filters: null,
+            TaskId: null);
+
+        var payload = await knowledgeClient.AssembleContextAsync(contextRequest, cancellationToken);
+
+        return new AcquiredContext(
+            payload.Items.Select(item => item.Content).ToList(),
+            payload.Truncated);
+    }
+}
+
 internal sealed record ContextAssembledPayload(Guid RequestId, int ItemCount, bool Truncated);
 
 internal sealed class EventMediatorContextAssemblyEventPublisher(EventMediator eventMediator) : IContextAssemblyEventPublisher
@@ -241,6 +285,50 @@ internal sealed class EventMediatorContextAssemblyEventPublisher(EventMediator e
             version: "v1",
             producer: "EOS.Knowledge",
             payload: new ContextAssembledPayload(requestId, itemCount, truncated)));
+    }
+}
+
+internal sealed record DecisionMadePayload(Guid DecisionId, Guid RequestId, double Confidence, double RiskScore, ReasoningType ReasoningTypeApplied);
+
+internal sealed class EventMediatorDecisionMadeEventPublisher(EventMediator eventMediator) : IDecisionMadeEventPublisher
+{
+    public void PublishDecisionMade(Guid decisionId, Guid requestId, double confidence, double riskScore, ReasoningType reasoningTypeApplied)
+    {
+        eventMediator.Publish(EventEnvelope<DecisionMadePayload>.Create(
+            eventType: "DecisionMade",
+            version: "v1",
+            producer: "EOS.Reasoning",
+            payload: new DecisionMadePayload(decisionId, requestId, confidence, riskScore, reasoningTypeApplied),
+            correlationId: requestId));
+    }
+}
+
+internal sealed record LowConfidenceDecisionFlaggedPayload(Guid DecisionId, double Confidence, double Threshold);
+
+internal sealed class EventMediatorLowConfidenceDecisionFlaggedEventPublisher(EventMediator eventMediator) : ILowConfidenceDecisionFlaggedEventPublisher
+{
+    public void PublishLowConfidenceDecisionFlagged(Guid decisionId, double confidence, double threshold)
+    {
+        eventMediator.Publish(EventEnvelope<LowConfidenceDecisionFlaggedPayload>.Create(
+            eventType: "LowConfidenceDecisionFlagged",
+            version: "v1",
+            producer: "EOS.Reasoning",
+            payload: new LowConfidenceDecisionFlaggedPayload(decisionId, confidence, threshold)));
+    }
+}
+
+internal sealed record ContextExpansionRequestedPayload(Guid RequestId, ReasoningContextScope OriginalScope, ReasoningContextScope ExpandedScope);
+
+internal sealed class EventMediatorContextExpansionRequestedEventPublisher(EventMediator eventMediator) : IContextExpansionRequestedEventPublisher
+{
+    public void PublishContextExpansionRequested(Guid requestId, ReasoningContextScope originalScope, ReasoningContextScope expandedScope)
+    {
+        eventMediator.Publish(EventEnvelope<ContextExpansionRequestedPayload>.Create(
+            eventType: "ContextExpansionRequested",
+            version: "v1",
+            producer: "EOS.Reasoning",
+            payload: new ContextExpansionRequestedPayload(requestId, originalScope, expandedScope),
+            correlationId: requestId));
     }
 }
 
