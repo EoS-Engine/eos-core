@@ -1,5 +1,26 @@
 # WP-020 Completion Report — Reasoning Engine: `compare()`, `get_trust_signal()`, `summarize()` & Explainability Depth
 
+## Commit History
+
+1. `7dfec9c` — "feat(reasoning): WP-020 contract types for compare/get_trust_signal/summarize"
+2. `36b2bbd` — "feat(reasoning): WP-020 implement compare/get_trust_signal/summarize"
+3. `7fb806f` — "feat(reasoning): WP-020 wire real summarize() into Compression sweep"
+4. `5bace7f` — "test(reasoning): WP-020 tests, AG-0003, and completion report"
+5. `81307f0` — "fix(reasoning): address CodeRabbit round-1 findings on PR #17"
+6. `84e94ec` — Merge commit (normal merge, no squash/rebase)
+
+## PR Number
+
+[EoS-Engine/eos-core#17](https://github.com/EoS-Engine/eos-core/pull/17)
+
+## Merge Commit
+
+`84e94ec`
+
+## CodeRabbit Review
+
+Two rounds on PR #17: Round 1 found 3 valid issues (compare()'s stage list incorrectly implied Stage 6, AG-0003/completion-report wording incorrectly described `query_history()` as an unimplemented interface member rather than an omitted one, `SummarizeAsync`'s `sizeBudget` was never enforced against actual provider output) — all fixed in commit `81307f0`. Round 2: no new findings.
+
 ## Implemented Components
 
 - **`compare()`** (`IReasoningEngineClient.CompareAsync`) — reduced pipeline (§10.2, Stages 1, 5, 7, 10–12; excludes Stage 6, purely structural per §11 Comparative Reasoning). Enforces §14.1's preconditions (subject not Quarantined; candidates exclude Quarantined/Archived) via `ArgumentException`. Structural signal: shared `KnowledgeGraphRef` or overlapping `DomainTags`. Satisfies §14.1's postconditions: `Confidence` ∈ [0.0, 1.0]; `AcceptedMatches ∪ RejectedMatches` = all input candidates.
