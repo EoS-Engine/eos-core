@@ -95,9 +95,10 @@ public sealed class ReasoningEngine(
         return decisions;
     }
 
-    // §10.2: compare() invokes Stages 1, 5-7, 10-12 — no Stage 6 ("no goal/intent/constraint
-    // stages needed since the request itself fully specifies the comparison"), so this is
-    // purely structural (§11 Comparative Reasoning), never a semantic/embedding judgment.
+    // §10.2: compare() invokes Stages 1, 5, 7, 10-12 (§10.2's own range notation reads "Stages
+    // 1, 5-7, 10-12", but excludes Stage 6 — "no goal/intent/constraint stages needed since the
+    // request itself fully specifies the comparison"), so this is purely structural (§11
+    // Comparative Reasoning), never a semantic/embedding judgment.
     public Task<ConfidenceGuardResult> CompareAsync(
         PipelineRecord subject, IEnumerable<PipelineRecord> candidates, CancellationToken cancellationToken = default)
     {
@@ -159,6 +160,11 @@ public sealed class ReasoningEngine(
             throw new ArgumentException("content must not be empty.", nameof(content));
         }
 
+        if (sizeBudget is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sizeBudget), sizeBudget, "sizeBudget must be positive when supplied.");
+        }
+
         var payload = sizeBudget is { } budget
             ? $"Summarize the following content in at most {budget} characters:\n\n{content}"
             : $"Summarize the following content:\n\n{content}";
@@ -181,7 +187,15 @@ public sealed class ReasoningEngine(
                 ReasoningFailureMode.InternalError, inferenceResult.ErrorMessage ?? "AI Provider returned no usable output.");
         }
 
-        return new Summary(inferenceResult.Output.Trim());
+        var output = inferenceResult.Output.Trim();
+        if (sizeBudget is { } maximum && output.Length > maximum)
+        {
+            throw new ReasoningFailedException(
+                ReasoningFailureMode.InternalError,
+                $"AI Provider returned a summary of {output.Length} characters, exceeding the requested size budget of {maximum}.");
+        }
+
+        return new Summary(output);
     }
 
     // Stage 1 (§10): Context Processing — "normalize/structure the ContextPayload received

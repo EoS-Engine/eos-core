@@ -2,7 +2,7 @@
 
 ## Summary
 
-During WP-020 architecture review, `IReasoningEngineClient.query_history()` was found to have no legal data-access mechanism in any frozen document. `query_history()` is documented here as a fact only and is deferred, unimplemented, as a result of this document. `compare()`, `get_trust_signal()`, and `summarize()` are unaffected and proceed under WP-020 as planned.
+During WP-020 architecture review, `query_history()` — the capability Reasoning-Engine-Specification-v1.0 §16.1/§13.7 names as a member `IReasoningEngineClient` should eventually expose — was found to have no legal data-access mechanism in any frozen document. It is documented here as a fact only and is deferred: no `query_history` member is declared on `IReasoningEngineClient` as a result of this document, rather than being declared and left unimplemented. `compare()`, `get_trust_signal()`, and `summarize()` are unaffected and proceed under WP-020 as planned.
 
 ## Evidence
 
@@ -34,7 +34,7 @@ The WP-020 roadmap row's own "Test verification" and "Demo / acceptance criteria
 
 ## Impact
 
-WP-020's roadmap-defined Acceptance Criteria (Test Verification and Demo/Acceptance Criteria) do not reference `query_history()` and are fully satisfiable by `compare()`, `get_trust_signal()`, and `summarize()` alone. `query_history()` remains an unimplemented member of `IReasoningEngineClient`; any caller invoking it receives a documented "not yet implemented" failure rather than a fabricated result. No production code exists for this capability.
+WP-020's roadmap-defined Acceptance Criteria (Test Verification and Demo/Acceptance Criteria) do not reference `query_history()` and are fully satisfiable by `compare()`, `get_trust_signal()`, and `summarize()` alone. `query_history()` is not declared on `IReasoningEngineClient` at all — its Specification-named capability is deferred rather than represented by a stub member, so no caller can reference or invoke it; there is no runtime "not yet implemented" failure to receive, only a compile-time absence. No production code exists for this capability.
 
 ## Recommendation
 

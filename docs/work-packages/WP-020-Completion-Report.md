@@ -2,7 +2,7 @@
 
 ## Implemented Components
 
-- **`compare()`** (`IReasoningEngineClient.CompareAsync`) — reduced pipeline (§10.2, Stages 1, 5–7, 10–12; no Stage 6, purely structural per §11 Comparative Reasoning). Enforces §14.1's preconditions (subject not Quarantined; candidates exclude Quarantined/Archived) via `ArgumentException`. Structural signal: shared `KnowledgeGraphRef` or overlapping `DomainTags`. Satisfies §14.1's postconditions: `Confidence` ∈ [0.0, 1.0]; `AcceptedMatches ∪ RejectedMatches` = all input candidates.
+- **`compare()`** (`IReasoningEngineClient.CompareAsync`) — reduced pipeline (§10.2, Stages 1, 5, 7, 10–12; excludes Stage 6, purely structural per §11 Comparative Reasoning). Enforces §14.1's preconditions (subject not Quarantined; candidates exclude Quarantined/Archived) via `ArgumentException`. Structural signal: shared `KnowledgeGraphRef` or overlapping `DomainTags`. Satisfies §14.1's postconditions: `Confidence` ∈ [0.0, 1.0]; `AcceptedMatches ∪ RejectedMatches` = all input candidates.
 - **`get_trust_signal()`** (`IReasoningEngineClient.GetTrustSignalAsync`) — reduced pipeline (§10.2, Stages 1, 6, 10–12). Since `EOS.Reasoning` has no accessible historical-track-record source, always returns the specification's own explicit no-history case: `TrustSignal(sourceRole, 0.5, "no-history-available")`. Satisfies §14.2's postcondition exactly ("if no history exists for the role, returns a neutral default (0.5), never null").
 - **`summarize()`** (`IReasoningEngineClient.SummarizeAsync`) — reduced pipeline (§10.2, Stages 1, 6, 11–12), real single inference call via `IAIProviderClient`. Wired as the real backing for `ISummarizer`, replacing WP-016's `TruncatingSummarizerStub` in `Program.cs` (`ReasoningEngineSummarizerAdapter`) — satisfies the roadmap's own expected deliverable: "WP-016's Compression sweep now calls a real `summarize()`."
 
@@ -17,7 +17,7 @@
 
 ## Deferred Component
 
-- **`query_history()`** — intentionally left unimplemented on `IReasoningEngineClient`. Documented in `IReasoningEngineClient.cs`'s own doc comment as deferred per AG-0003.
+- **`query_history()`** — intentionally omitted from `IReasoningEngineClient` (no member declared, not a stubbed/unimplemented one). Documented in `IReasoningEngineClient.cs`'s own doc comment as deferred per AG-0003.
 
 ## Reference to AG-0003
 

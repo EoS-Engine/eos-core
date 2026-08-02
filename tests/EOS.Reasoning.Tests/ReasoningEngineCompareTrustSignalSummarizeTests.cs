@@ -182,6 +182,26 @@ public class ReasoningEngineCompareTrustSignalSummarizeTests
         Assert.Equal(ReasoningFailureMode.InternalError, exception.FailureMode);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task SummarizeAsync_Throws_WhenSizeBudgetIsNotPositive(int sizeBudget)
+    {
+        var engine = CreateEngine(new StubAIProviderClient(succeed: true, output: "summary"));
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => engine.SummarizeAsync("content", sizeBudget));
+    }
+
+    [Fact]
+    public async Task SummarizeAsync_ThrowsInternalError_WhenProviderOutputExceedsSizeBudget()
+    {
+        var engine = CreateEngine(new StubAIProviderClient(succeed: true, output: "this summary is far too long for the budget"));
+
+        var exception = await Assert.ThrowsAsync<ReasoningFailedException>(() => engine.SummarizeAsync("content", sizeBudget: 5));
+
+        Assert.Equal(ReasoningFailureMode.InternalError, exception.FailureMode);
+    }
+
     private sealed class NeverCalledContextAcquisitionProvider : IContextAcquisitionProvider
     {
         public static readonly NeverCalledContextAcquisitionProvider Instance = new();
