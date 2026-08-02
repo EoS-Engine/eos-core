@@ -8,6 +8,21 @@ This document does not define architecture. `docs/EOS-Specification.md` remains 
 
 ---
 
+## 0. Pre-Review Governance Check
+
+Before any Work Package review begins (starting with WP-019, per `docs/governance/EOS-Engineering-Governance-v2.md`):
+
+1. Read `docs/governance/EOS-Engineering-Governance-v2.md`.
+2. Execute STEP-0 (§9 of that document).
+3. Validate the Reopening Criteria (§4 of that document) against any claim that would otherwise trigger an architecture review.
+4. If the Reopening Criteria are not satisfied:
+   - Architecture Review is skipped.
+   - Continue directly with Delta Review (`docs/governance/EOS-Engineering-Governance-v2.md` §5), scoped to the active Work Package and any regression it introduces.
+
+This check does not replace or modify the Architecture Review defined in §5 below — it determines whether that review applies to a given request, per the frozen-baseline policy `EOS Engineering Governance v2` establishes for WP-019 through WP-030.
+
+---
+
 ## 1. Purpose
 
 EOS is built incrementally, one Work Package at a time, against an already-approved and frozen architecture. This workflow exists because the alternative — implementing against an architecture that is still being decided, or implementing several capabilities at once — has a predictable failure mode: scope drifts, abstractions get built for requirements nobody has yet, and the codebase accumulates complexity that no single Work Package's acceptance criteria ever asked for.

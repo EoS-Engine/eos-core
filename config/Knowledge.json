@@ -1,5 +1,15 @@
 {
   "vectorStoreCollection": "eos-knowledge",
   "dependsOnDisallowedTargetTypes": ["Lesson"],
-  "governanceApprovalRequiredRelationshipTypes": ["Replaces", "Supersedes"]
+  "governanceApprovalRequiredRelationshipTypes": ["Replaces", "Supersedes"],
+  "freshnessDecayHalfLifeDays": 90,
+  "freshnessTypeWeights": {
+    "EngineeringStandards": 1.5,
+    "OperationalKnowledge": 0.5
+  },
+  "freshnessExpirationThreshold": 0.25,
+  "rankingConfidenceWeight": 0.4,
+  "rankingReliabilityWeight": 0.3,
+  "rankingRelationshipRelevanceWeight": 0.2,
+  "rankingDeprecationPenaltyWeight": 0.5
 }
