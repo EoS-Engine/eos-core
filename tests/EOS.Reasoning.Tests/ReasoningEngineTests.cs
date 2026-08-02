@@ -259,10 +259,12 @@ public class ReasoningEngineTests
             options: new ReasoningEngineOptions(ContextExpansionCap: 1, LowConfidenceFloor: 0.9),
             lowConfidenceDecisionFlaggedEventPublisher: lowConfidencePublisher);
 
-        await engine.ReasonAsync(CreateRequest("a goal"));
+        var request = CreateRequest("a goal");
+        await engine.ReasonAsync(request);
 
         Assert.Equal(1, lowConfidencePublisher.CallCount);
         Assert.Equal(0.5, lowConfidencePublisher.LastConfidence);
+        Assert.Equal(request.CorrelationId, lowConfidencePublisher.LastCorrelationId);
     }
 
     [Theory]
@@ -282,7 +284,7 @@ public class ReasoningEngineTests
     }
 
     [Fact]
-    public async Task ReasonAsync_ThrowsInvalidGoal_BeforeAcquiringContext_WhenGoalIsEmptyAndContextScopeIsSupplied()
+    public async Task ReasonAsync_AcquiresContext_BeforeThrowingInvalidGoal_WhenGoalIsEmptyAndContextScopeIsSupplied()
     {
         // §10: "Every request... passes through all applicable stages in order" — Stage 1
         // (Context Processing) precedes Stage 2 (Goal Understanding), so an empty goal combined
@@ -397,10 +399,12 @@ public class ReasoningEngineTests
     {
         public int CallCount { get; private set; }
         public double? LastConfidence { get; private set; }
+        public Guid? LastCorrelationId { get; private set; }
 
         public void PublishLowConfidenceDecisionFlagged(Guid decisionId, Guid correlationId, double confidence, double threshold)
         {
             CallCount++;
+            LastCorrelationId = correlationId;
             LastConfidence = confidence;
         }
     }
