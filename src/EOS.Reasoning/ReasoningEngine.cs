@@ -95,6 +95,95 @@ public sealed class ReasoningEngine(
         return decisions;
     }
 
+    // §10.2: compare() invokes Stages 1, 5-7, 10-12 — no Stage 6 ("no goal/intent/constraint
+    // stages needed since the request itself fully specifies the comparison"), so this is
+    // purely structural (§11 Comparative Reasoning), never a semantic/embedding judgment.
+    public Task<ConfidenceGuardResult> CompareAsync(
+        PipelineRecord subject, IEnumerable<PipelineRecord> candidates, CancellationToken cancellationToken = default)
+    {
+        if (subject.Status == PipelineRecordStatus.Quarantined)
+        {
+            throw new ArgumentException("subject.Status must not be Quarantined (§14.1 precondition).", nameof(subject));
+        }
+
+        var candidateList = candidates.ToArray();
+        if (candidateList.Any(candidate => candidate.Status is PipelineRecordStatus.Quarantined or PipelineRecordStatus.Archived))
+        {
+            throw new ArgumentException(
+                "candidates must exclude any Quarantined or Archived record (§14.1 precondition).", nameof(candidates));
+        }
+
+        var accepted = new List<PipelineRecord>();
+        var rejected = new List<RejectedMatch>();
+
+        foreach (var candidate in candidateList)
+        {
+            if (subject.KnowledgeGraphRef == candidate.KnowledgeGraphRef || subject.DomainTags.Intersect(candidate.DomainTags).Any())
+            {
+                accepted.Add(candidate);
+            }
+            else
+            {
+                rejected.Add(new RejectedMatch(candidate, "No structural signal shared (same KnowledgeGraphRef or overlapping DomainTags)."));
+            }
+        }
+
+        var confidence = candidateList.Length == 0 ? 0.0 : (double)accepted.Count / candidateList.Length;
+
+        return Task.FromResult(new ConfidenceGuardResult(confidence, accepted.ToArray(), rejected.ToArray()));
+    }
+
+    // §10.2: get_trust_signal() invokes Stages 1, 6, 10-12. EOS.Reasoning has no dependency
+    // path to a historical track-record source (the same class of gap as query_history(),
+    // AG-0003) — the only textually-honest behavior is §14.2's own named fallback: "if no
+    // history exists for the role, returns a neutral default (0.5), never null." No history is
+    // ever accessible from this pipeline today, so that condition is unconditionally true;
+    // Stage 6 has nothing to reason over and is not invoked.
+    public Task<TrustSignal> GetTrustSignalAsync(string sourceRole, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourceRole))
+        {
+            throw new ArgumentException("sourceRole must not be empty (§14.2 precondition).", nameof(sourceRole));
+        }
+
+        return Task.FromResult(new TrustSignal(sourceRole, 0.5, "no-history-available"));
+    }
+
+    // §10.2: summarize() invokes Stages 1, 6, 11-12 — "content generation is a reasoning act...
+    // but carries no independent 'decision'". Real Stage 6 inference, unlike
+    // GetTrustSignalAsync, since the content to reason over is supplied directly by the caller.
+    public async Task<Summary> SummarizeAsync(string content, int? sizeBudget = null, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            throw new ArgumentException("content must not be empty.", nameof(content));
+        }
+
+        var payload = sizeBudget is { } budget
+            ? $"Summarize the following content in at most {budget} characters:\n\n{content}"
+            : $"Summarize the following content:\n\n{content}";
+
+        var inferenceRequest = new InferenceRequest(
+            RequestId: Guid.NewGuid(),
+            CorrelationId: Guid.NewGuid(),
+            CapabilityRequired: "Chat",
+            Payload: payload,
+            ContextPayloadRef: null,
+            TokenBudgetEstimate: 2048,
+            Priority: 0,
+            Caller: "EOS.Reasoning");
+
+        var inferenceResult = await aiProviderClient.InferAsync(inferenceRequest, cancellationToken);
+
+        if (!inferenceResult.Success || string.IsNullOrWhiteSpace(inferenceResult.Output))
+        {
+            throw new ReasoningFailedException(
+                ReasoningFailureMode.InternalError, inferenceResult.ErrorMessage ?? "AI Provider returned no usable output.");
+        }
+
+        return new Summary(inferenceResult.Output.Trim());
+    }
+
     // Stage 1 (§10): Context Processing — "normalize/structure the ContextPayload received
     // from Memory (§12.1)". Real when the caller supplies ContextScope (§13.2): the Composition
     // Root Adapter is invoked to acquire it, with §12.4 Context Expansion attempted (bounded by
