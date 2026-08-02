@@ -183,7 +183,7 @@ try
         new NotYetPromotedPipelineStageStore(),
         new NeverReadRecentlyStub(),
         new NoActiveRetentionHoldsStub(),
-        new TruncatingSummarizerStub(thresholdsOptions.SummarizationStubTruncationLength),
+        new ReasoningEngineSummarizerAdapter(reasoningEngine, thresholdsOptions.SummarizationStubTruncationLength),
         new EventMediatorMemoryCompressedEventPublisher(eventMediator));
     // Real, independently tested infrastructure with no production caller yet (mirrors
     // RedisMemoryStore's own WP-014 precedent) — no WP before this one writes production
@@ -361,17 +361,17 @@ internal sealed class NotYetPromotedPipelineStageStore : IPipelineStageStore
 }
 
 /// <summary>
-/// WP-016's stub for <see cref="ISummarizer"/> (see that interface's own documentation for
-/// why): <c>EOS.Reasoning</c>'s real <c>summarize()</c> does not exist until WP-020. Truncates
-/// rather than summarizes — never claims to produce a real summary. Deferred, not implemented;
-/// no code here claims otherwise.
+/// WP-020: real backing for <see cref="ISummarizer"/> (WP-016's own interface — see its
+/// documentation), bridging to <see cref="IReasoningEngineClient.SummarizeAsync"/>. Replaces
+/// WP-016's <c>TruncatingSummarizerStub</c>, per the WP-020 roadmap row's own expected
+/// deliverable: "WP-016's Compression sweep now calls a real <c>summarize()</c>."
 /// </summary>
-internal sealed class TruncatingSummarizerStub(int maxLength) : ISummarizer
+internal sealed class ReasoningEngineSummarizerAdapter(IReasoningEngineClient reasoningEngine, int sizeBudget) : ISummarizer
 {
-    public Task<string> SummarizeAsync(string content, CancellationToken cancellationToken = default)
+    public async Task<string> SummarizeAsync(string content, CancellationToken cancellationToken = default)
     {
-        var truncated = content.Length <= maxLength ? content : content[..maxLength];
-        return Task.FromResult(truncated);
+        var summary = await reasoningEngine.SummarizeAsync(content, sizeBudget, cancellationToken);
+        return summary.Content;
     }
 }
 
