@@ -71,7 +71,10 @@ public sealed record ThresholdsOptions
     // Reasoning Engine Context Expansion cap (Reasoning-Engine-Specification-v1.0 §12.4): "max 1
     // expansion per request, configurable via Thresholds.json" — the cap value itself is the
     // configurable field (WP-019 Implementation Plan, Context Expansion Ambiguity — Resolved).
-    [Range(1, int.MaxValue)]
+    // Upper-bounded to 1: §12.4's own text ("max 1 expansion per request... bounded to prevent
+    // unbounded back-and-forth") caps expansions at exactly one; only the field's presence in
+    // Thresholds.json is what "configurable" refers to, not permission to exceed that bound.
+    [Range(1, 1)]
     public required int ReasoningContextExpansionCap { get; init; }
 
     // Reasoning Engine Low Confidence floor (Reasoning-Engine-Specification-v1.0 §21): "a

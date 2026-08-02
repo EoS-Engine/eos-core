@@ -21,7 +21,7 @@ public sealed class ReasoningEngine(
     private const double FixedConfidence = 0.5;
     private const double FixedRiskScore = 0;
     private const string CandidateDelimiter = "===CANDIDATE===";
-    private const int DefaultContextBudget = 2048;
+    public const int DefaultContextBudget = 2048;
 
     // §11's 13 Reasoning Types, verbatim "Pipeline Emphasis" column text — logged per request
     // to satisfy the roadmap's Demo/Acceptance criterion ("visibly different pipeline emphasis
@@ -46,9 +46,15 @@ public sealed class ReasoningEngine(
     public async Task<Decision[]> ReasonAsync(ReasoningRequest request, CancellationToken cancellationToken = default)
     {
         var reasoningType = request.ReasoningType ?? ReasoningType.EngineeringReasoning;
+        if (!PipelineEmphasis.TryGetValue(reasoningType, out var emphasis))
+        {
+            throw new ReasoningFailedException(
+                ReasoningFailureMode.InternalError, $"Unsupported ReasoningType '{reasoningType}'.");
+        }
+
         logger.LogInformation(
             "ReasoningType {ReasoningType} pipeline emphasis (§11): {Emphasis}",
-            reasoningType, PipelineEmphasis[reasoningType]);
+            reasoningType, emphasis);
 
         var (acquiredContext, expansionWasNeeded) = await ProcessContextAsync(request, cancellationToken);
         UnderstandGoal(request);
@@ -66,20 +72,23 @@ public sealed class ReasoningEngine(
         var hypotheses = SplitHypotheses(inferenceResult.Output!);
 
         var decisions = hypotheses.Length <= 1
-            ? [BuildSingleDecision(request, reasoningType, inferenceResult, evidenceRefs, confidence, contextNote)]
+            ? [BuildSingleDecision(request, reasoningType, hypotheses, inferenceResult, evidenceRefs, confidence, contextNote)]
             : BuildRankedDecisions(request, reasoningType, hypotheses, inferenceResult, evidenceRefs, confidence, contextNote);
 
         foreach (var decision in decisions)
         {
             ValidateDecision(decision);
+        }
 
+        foreach (var decision in decisions)
+        {
             decisionMadeEventPublisher.PublishDecisionMade(
                 decision.DecisionId, decision.RequestId, decision.Confidence, decision.RiskScore, decision.ReasoningTypeApplied);
 
             if (decision.Confidence < options.LowConfidenceFloor)
             {
                 lowConfidenceDecisionFlaggedEventPublisher.PublishLowConfidenceDecisionFlagged(
-                    decision.DecisionId, decision.Confidence, options.LowConfidenceFloor);
+                    decision.DecisionId, request.CorrelationId, decision.Confidence, options.LowConfidenceFloor);
             }
         }
 
@@ -283,10 +292,9 @@ public sealed class ReasoningEngine(
     }
 
     private Decision BuildSingleDecision(
-        ReasoningRequest request, ReasoningType reasoningType, InferenceResult inferenceResult,
+        ReasoningRequest request, ReasoningType reasoningType, string[] hypotheses, InferenceResult inferenceResult,
         string[] evidenceRefs, double confidence, string? contextNote)
     {
-        var hypotheses = new[] { inferenceResult.Output!.Trim() };
         var selectedHypothesis = MakeDecision(hypotheses);
         var rejectedHypotheses = ExploreAlternatives();
         var tradeOffs = AnalyzeTradeOffs();

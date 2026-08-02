@@ -6,5 +6,5 @@ namespace EOS.Reasoning;
 /// </summary>
 public interface ILowConfidenceDecisionFlaggedEventPublisher
 {
-    void PublishLowConfidenceDecisionFlagged(Guid decisionId, double confidence, double threshold);
+    void PublishLowConfidenceDecisionFlagged(Guid decisionId, Guid correlationId, double confidence, double threshold);
 }

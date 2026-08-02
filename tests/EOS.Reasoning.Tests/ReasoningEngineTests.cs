@@ -265,18 +265,39 @@ public class ReasoningEngineTests
         Assert.Equal(0.5, lowConfidencePublisher.LastConfidence);
     }
 
-    [Fact]
-    public async Task ReasonAsync_DoesNotFlagLowConfidence_WhenConfidenceAtOrAboveConfiguredFloor()
+    [Theory]
+    [InlineData(0.3)]
+    [InlineData(0.5)]
+    public async Task ReasonAsync_DoesNotFlagLowConfidence_WhenConfidenceAtOrAboveConfiguredFloor(double floor)
     {
         var lowConfidencePublisher = new CapturingLowConfidenceDecisionFlaggedEventPublisher();
         var engine = CreateEngine(
             new StubAIProviderClient(succeed: true, output: "an answer"), NeverCalledContextAcquisitionProvider.Instance,
-            options: new ReasoningEngineOptions(ContextExpansionCap: 1, LowConfidenceFloor: 0.3),
+            options: new ReasoningEngineOptions(ContextExpansionCap: 1, LowConfidenceFloor: floor),
             lowConfidenceDecisionFlaggedEventPublisher: lowConfidencePublisher);
 
         await engine.ReasonAsync(CreateRequest("a goal"));
 
         Assert.Equal(0, lowConfidencePublisher.CallCount);
+    }
+
+    [Fact]
+    public async Task ReasonAsync_ThrowsInvalidGoal_BeforeAcquiringContext_WhenGoalIsEmptyAndContextScopeIsSupplied()
+    {
+        // §10: "Every request... passes through all applicable stages in order" — Stage 1
+        // (Context Processing) precedes Stage 2 (Goal Understanding), so an empty goal combined
+        // with a ContextScope still acquires context before InvalidGoal is raised. This test
+        // pins that specification-ordered behavior rather than treating it as a defect.
+        var contextProvider = new CapturingContextAcquisitionProvider();
+        var engine = CreateEngine(
+            new StubAIProviderClient(succeed: true, output: "unused"), contextProvider);
+        var scope = new ReasoningContextScope(DomainTags: ["backend"], ProjectScope: null, Budget: 4096);
+        var request = CreateRequest("   ") with { ContextScope = scope };
+
+        var exception = await Assert.ThrowsAsync<ReasoningFailedException>(() => engine.ReasonAsync(request));
+
+        Assert.Equal(ReasoningFailureMode.InvalidGoal, exception.FailureMode);
+        Assert.Equal(scope, contextProvider.LastScope);
     }
 
     [Fact]
@@ -377,7 +398,7 @@ public class ReasoningEngineTests
         public int CallCount { get; private set; }
         public double? LastConfidence { get; private set; }
 
-        public void PublishLowConfidenceDecisionFlagged(Guid decisionId, double confidence, double threshold)
+        public void PublishLowConfidenceDecisionFlagged(Guid decisionId, Guid correlationId, double confidence, double threshold)
         {
             CallCount++;
             LastConfidence = confidence;

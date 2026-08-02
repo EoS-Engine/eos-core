@@ -153,7 +153,7 @@ Any file under `src/EOS.Knowledge/`, `src/EOS.KnowledgeGraph/`, `src/EOS.Gates/`
 
 ## Dependency Changes and Package Changes
 
-None.
+**Addendum (post-implementation, CodeRabbit round 1):** one additive package reference, `Microsoft.Extensions.Logging.Abstractions` (version 10.0.10, matching the version already used by `EOS.Gates.csproj`), was added to `EOS.Reasoning.csproj`. This was not anticipated when this section was originally written "None," but is required to satisfy the roadmap's own Demo/Acceptance criterion ("confirmed via logged stage weighting") — no reasoning-type-emphasis logging is possible without an injectable logging abstraction, and `Microsoft.Extensions.Logging.Abstractions` is this codebase's established convention for it (`EOS.Gates.csproj` already references it directly; `EOS.Runner` consumes it via `Microsoft.Extensions.Hosting`). No other package or project reference was added.
 
 ## Configuration Changes
 

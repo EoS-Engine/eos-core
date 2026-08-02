@@ -118,7 +118,7 @@ public class AskCommandIntegrationTests
 
     private sealed class NoOpLowConfidenceDecisionFlaggedEventPublisher : ILowConfidenceDecisionFlaggedEventPublisher
     {
-        public void PublishLowConfidenceDecisionFlagged(Guid decisionId, double confidence, double threshold)
+        public void PublishLowConfidenceDecisionFlagged(Guid decisionId, Guid correlationId, double confidence, double threshold)
         {
         }
     }

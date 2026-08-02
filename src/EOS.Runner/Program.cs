@@ -248,8 +248,9 @@ internal sealed class AIProviderEmbeddingGenerator(IEmbeddingProviderClient embe
 /// (Constitution Part 1 §1.2). <c>ProjectScope</c> carries <see cref="ReasoningContextScope.ProjectScope"/>
 /// when supplied, else <see cref="ReasoningContextScope.DomainTags"/> — §13.2 names both fields,
 /// but <see cref="ContextRequest"/>'s current shape has one project-scope filter slot for them.
-/// <c>2048</c> mirrors this file's own existing default inference token budget when
-/// <see cref="ReasoningContextScope.Budget"/> is unspecified.
+/// <see cref="ReasoningEngine.DefaultContextBudget"/> is reused here (rather than a second,
+/// independent literal) so the initial-acquisition default and the Context Expansion doubling
+/// base (§12.4) stay in sync by construction.
 /// </summary>
 internal sealed class KnowledgeContextAcquisitionProvider(IKnowledgeClient knowledgeClient) : IContextAcquisitionProvider
 {
@@ -257,7 +258,7 @@ internal sealed class KnowledgeContextAcquisitionProvider(IKnowledgeClient knowl
         ReasoningContextScope scope, CancellationToken cancellationToken = default)
     {
         var contextRequest = new ContextRequest(
-            TokenOrSizeBudget: scope.Budget ?? 2048,
+            TokenOrSizeBudget: scope.Budget ?? ReasoningEngine.DefaultContextBudget,
             IncludesWorking: false,
             IncludesShortTerm: false,
             IncludesEpisodic: true,
@@ -307,13 +308,14 @@ internal sealed record LowConfidenceDecisionFlaggedPayload(Guid DecisionId, doub
 
 internal sealed class EventMediatorLowConfidenceDecisionFlaggedEventPublisher(EventMediator eventMediator) : ILowConfidenceDecisionFlaggedEventPublisher
 {
-    public void PublishLowConfidenceDecisionFlagged(Guid decisionId, double confidence, double threshold)
+    public void PublishLowConfidenceDecisionFlagged(Guid decisionId, Guid correlationId, double confidence, double threshold)
     {
         eventMediator.Publish(EventEnvelope<LowConfidenceDecisionFlaggedPayload>.Create(
             eventType: "LowConfidenceDecisionFlagged",
             version: "v1",
             producer: "EOS.Reasoning",
-            payload: new LowConfidenceDecisionFlaggedPayload(decisionId, confidence, threshold)));
+            payload: new LowConfidenceDecisionFlaggedPayload(decisionId, confidence, threshold),
+            correlationId: correlationId));
     }
 }
 
