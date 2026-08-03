@@ -10,6 +10,7 @@ public sealed class ProtectionGate(
     ApprovalEngine approvalEngine,
     EmergencyShutdownState emergencyShutdownState,
     ResourceCeilings resourceCeilings,
+    IResourceManagementClient resourceManagementClient,
     ILogger<ProtectionGate> logger) : IProtectionClient
 {
     public ValidationResult Validate(ActionRequest action)
@@ -86,12 +87,16 @@ public sealed class ProtectionGate(
         // Steps 2-4 (Context/Knowledge/Decision Validation): this WP's ActionRequest carries no
         // ContextPayload/Explanation/Confidence data — each step passes absent the data it would
         // otherwise check (WP-012 Implementation Plan).
-        // Step 5 (Resource Validation): resourceCeilings is structurally wired (§16), but no
-        // ActionRequest carries a requested resource amount to compare against it yet — passes
-        // absent that data (WP-013 Architecture Challenge, G1/G4; real enforcement awaits
-        // Resource Management, WP-021). resourceCeilings is intentionally unused beyond this
-        // structural presence.
-        _ = resourceCeilings;
+        // Step 5 (Resource Validation): resourceCeilings is the configured §19.3 Limit; no
+        // ActionRequest carries a requested resource amount to compare against it yet — this
+        // step still passes absent that data (WP-013 Architecture Challenge, G1/G4). No
+        // enforcement logic is added here, per WP-021's own scope boundary. WP-021: the real,
+        // live-measured CPU budget is retrieved and logged alongside the configured ceiling,
+        // satisfying "Protection's ceiling check now cites this real value in its logs."
+        var measuredCpuBudget = resourceManagementClient.GetCurrentBudget(ResourceType.Cpu);
+        logger.LogInformation(
+            "Protection resource ceiling check: ActionId={ActionId} ConfiguredCpuCeilingPercent={ConfiguredCeilingPercent} MeasuredCpuBudget={MeasuredCpuBudget}",
+            action.ActionId, resourceCeilings.CpuCeilingPercent, measuredCpuBudget);
 
         // Step 6: Policy Validation.
         var policyDenial = CheckPolicy(action, RiskTier.High);

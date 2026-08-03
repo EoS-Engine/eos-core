@@ -6,6 +6,7 @@ using EOS.Knowledge;
 using EOS.KnowledgeGraph;
 using EOS.Orchestrator;
 using EOS.Reasoning;
+using EOS.Resources;
 using EOS.Runner.Bootstrap;
 using EOS.Runner.Commands;
 using EOS.SDK;
@@ -103,6 +104,39 @@ try
         BackgroundTasksCeilingCount: thresholdsOptions.BackgroundTasksCeilingCount);
     var emergencyShutdownState = new EmergencyShutdownState();
 
+    var eventMediator = new EventMediator();
+
+    // WP-021: Resource Management (Resource-Management-Specification-v1.0 §10.2/§10.3/§17/§18).
+    var resourceMonitor = new ResourceMonitor(thresholdsOptions.ResourceSamplingIntervalSeconds);
+    var capacityThresholds = new CapacityThresholds(
+        Cpu: new ResourceTierBoundaries(
+            thresholdsOptions.CpuWarningThresholdPercent, thresholdsOptions.CpuCriticalThresholdPercent, thresholdsOptions.CpuEmergencyThresholdPercent),
+        Ram: new ResourceTierBoundaries(
+            thresholdsOptions.RamWarningThresholdMegabytes, thresholdsOptions.RamCriticalThresholdMegabytes, thresholdsOptions.RamEmergencyThresholdMegabytes),
+        Disk: new ResourceTierBoundaries(
+            thresholdsOptions.DiskWarningThresholdMegabytes, thresholdsOptions.DiskCriticalThresholdMegabytes, thresholdsOptions.DiskEmergencyThresholdMegabytes),
+        ModelUsage: new ResourceTierBoundaries(
+            thresholdsOptions.ModelUsageWarningThresholdTokens, thresholdsOptions.ModelUsageCriticalThresholdTokens, thresholdsOptions.ModelUsageEmergencyThresholdTokens),
+        QueueLength: new ResourceTierBoundaries(
+            thresholdsOptions.QueueLengthWarningThresholdCount, thresholdsOptions.QueueLengthCriticalThresholdCount, thresholdsOptions.QueueLengthEmergencyThresholdCount),
+        BackgroundTasks: new ResourceTierBoundaries(
+            thresholdsOptions.BackgroundTasksWarningThresholdCount, thresholdsOptions.BackgroundTasksCriticalThresholdCount, thresholdsOptions.BackgroundTasksEmergencyThresholdCount),
+        CacheUsage: new ResourceTierBoundaries(
+            thresholdsOptions.CacheUsageWarningThresholdPercent, thresholdsOptions.CacheUsageCriticalThresholdPercent, thresholdsOptions.CacheUsageEmergencyThresholdPercent));
+    var capacityManager = new CapacityManager(capacityThresholds, new EventMediatorResourceThresholdCrossedEventPublisher(eventMediator));
+    var resourceManagementClient = new ResourceManagementClient(resourceMonitor, capacityManager);
+
+    // §20.1 Consumed Events: TaskStarted/TaskCompleted/TaskBlocked inform Queue Length/
+    // Background Task observation; InferenceRouted/InferenceCompleted inform Model Usage
+    // (WP-021 Implementation Plan Decision D6). Structurally ready — no real producer exists
+    // yet anywhere in this repository (no Scheduler, no real AI Provider event publishing),
+    // mirroring AutomaticConsolidationTriggerHandlers' own subscription pattern.
+    eventMediator.Subscribe<TaskStartedPayload>(envelope => resourceMonitor.RecordTaskStarted(envelope.Payload.TaskId));
+    eventMediator.Subscribe<TaskCompletedPayload>(envelope => resourceMonitor.RecordTaskCompleted(envelope.Payload.TaskId));
+    eventMediator.Subscribe<TaskBlockedPayload>(envelope => resourceMonitor.RecordTaskBlocked(envelope.Payload.TaskId));
+    eventMediator.Subscribe<InferenceRoutedPayload>(envelope => resourceMonitor.RecordInferenceRouted(envelope.Payload.Model));
+    eventMediator.Subscribe<InferenceCompletedPayload>(envelope => resourceMonitor.RecordInferenceCompleted(envelope.Payload.Model));
+
     var protectionGate = new ProtectionGate(
         policyEngine,
         ruleEngine,
@@ -110,6 +144,7 @@ try
         approvalEngine,
         emergencyShutdownState,
         resourceCeilings,
+        resourceManagementClient,
         host.Services.GetRequiredService<ILogger<ProtectionGate>>());
 
     var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
@@ -120,7 +155,6 @@ try
         Recency: thresholdsOptions.RankingRecencyWeight,
         DomainMatch: thresholdsOptions.RankingDomainMatchWeight,
         AccessFrequency: thresholdsOptions.RankingAccessFrequencyWeight);
-    var eventMediator = new EventMediator();
     var redisMemoryStore = new RedisMemoryStore(connectionOptions.RedisConnectionString);
     var vectorStore = new ChromaVectorStore(connectionOptions.ChromaDbEndpoint);
     var knowledgeClient = new KnowledgeClient(
@@ -333,6 +367,39 @@ internal sealed class EventMediatorContextExpansionRequestedEventPublisher(Event
             correlationId: requestId));
     }
 }
+
+internal sealed record ResourceThresholdCrossedPayload(ResourceType ResourceType, CapacityTier Tier);
+
+internal sealed class EventMediatorResourceThresholdCrossedEventPublisher(EventMediator eventMediator) : IResourceThresholdCrossedEventPublisher
+{
+    public void PublishResourceThresholdCrossed(ResourceType resourceType, CapacityTier tier)
+    {
+        eventMediator.Publish(EventEnvelope<ResourceThresholdCrossedPayload>.Create(
+            eventType: "ResourceThresholdCrossed",
+            version: "v1",
+            producer: "EOS.Resources",
+            payload: new ResourceThresholdCrossedPayload(resourceType, tier)));
+    }
+}
+
+// §20.1 Consumed Events (WP-021 Implementation Plan Decision D6): Constitution Part 3's
+// TaskStarted/TaskCompleted/TaskBlocked payload fields (task_id, actor_role/started_at,
+// evidence_refs[], blocking_gate/reason) — only task_id is needed by ResourceMonitor's
+// counting logic, so only that field is modeled here. No real producer (Scheduler) exists yet
+// anywhere in this repository — these subscriptions are structurally ready, not yet exercised.
+internal sealed record TaskStartedPayload(Guid TaskId);
+
+internal sealed record TaskCompletedPayload(Guid TaskId);
+
+internal sealed record TaskBlockedPayload(Guid TaskId);
+
+// AI-Provider-Layer-Specification-v1.0 §19's InferenceRouted/InferenceCompleted — only the
+// model identifier is needed here. AIProviderManager.cs currently logs these as messages, not
+// real published EventEnvelope-based events — this subscription is structurally ready, awaiting
+// a future WP's real Event Catalog wiring for the AI Provider Layer.
+internal sealed record InferenceRoutedPayload(string Model);
+
+internal sealed record InferenceCompletedPayload(string Model);
 
 internal sealed class RedisMemorySourceStore(RedisMemoryStore redisMemoryStore) : IMemorySourceStore
 {

@@ -32,7 +32,15 @@ public class ProtectionGateTests
             new ApprovalEngine(),
             new EmergencyShutdownState(),
             DefaultResourceCeilings,
+            new StubResourceManagementClient(),
             logger ?? new RecordingLogger());
+    }
+
+    private sealed class StubResourceManagementClient : IResourceManagementClient
+    {
+        public double GetCurrentBudget(ResourceType resourceType) => 0;
+
+        public CapacityTier GetCurrentTier(ResourceType resourceType) => CapacityTier.Safe;
     }
 
     [Theory]
@@ -96,7 +104,7 @@ public class ProtectionGateTests
             runtimePolicies: []);
         var gate = new ProtectionGate(
             policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
-            new EmergencyShutdownState(), DefaultResourceCeilings, new RecordingLogger());
+            new EmergencyShutdownState(), DefaultResourceCeilings, new StubResourceManagementClient(), new RecordingLogger());
 
         var result = gate.Validate(CreateRequest(riskScore: 50));
 
@@ -115,7 +123,7 @@ public class ProtectionGateTests
             runtimePolicies: []);
         var gate = new ProtectionGate(
             policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
-            new EmergencyShutdownState(), DefaultResourceCeilings, new RecordingLogger());
+            new EmergencyShutdownState(), DefaultResourceCeilings, new StubResourceManagementClient(), new RecordingLogger());
         var request = CreateRequest(riskScore: 50);
 
         gate.Validate(request);

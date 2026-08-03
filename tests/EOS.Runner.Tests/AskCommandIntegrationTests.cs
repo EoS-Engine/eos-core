@@ -38,6 +38,7 @@ public class AskCommandIntegrationTests
             new PolicyEngine([], [], [], []), new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
             new EmergencyShutdownState(),
             new ResourceCeilings(90, 8192, 476000, 100000, 32000, 4),
+            new StubResourceManagementClient(),
             NullLogger<ProtectionGate>.Instance);
 
         var connectionOptions = DataStoreConnectionOptions.FromEnvironment();
@@ -79,6 +80,7 @@ public class AskCommandIntegrationTests
             new PolicyEngine([], [], [], []), new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
             new EmergencyShutdownState(),
             new ResourceCeilings(90, 8192, 476000, 100000, 32000, 4),
+            new StubResourceManagementClient(),
             NullLogger<ProtectionGate>.Instance);
         var askCommand = new AskCommand(
             reasoningEngine, protectionGate, NeverCalledKnowledgeClient.Instance, NullLogger<AskCommand>.Instance);
@@ -96,6 +98,13 @@ public class AskCommandIntegrationTests
         {
             throw new InvalidOperationException("Should not be called for an empty/whitespace request.");
         }
+    }
+
+    private sealed class StubResourceManagementClient : IResourceManagementClient
+    {
+        public double GetCurrentBudget(ResourceType resourceType) => 0;
+
+        public CapacityTier GetCurrentTier(ResourceType resourceType) => CapacityTier.Safe;
     }
 
     private sealed class NeverCalledContextAcquisitionProvider : IContextAcquisitionProvider

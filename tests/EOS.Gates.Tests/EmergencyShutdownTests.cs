@@ -77,7 +77,7 @@ public class EmergencyShutdownTests
         var resourceCeilings = new ResourceCeilings(90, 8192, 476000, 100000, 32000, 4);
         var gate = new ProtectionGate(
             policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
-            new EmergencyShutdownState(), resourceCeilings, new NoOpLogger());
+            new EmergencyShutdownState(), resourceCeilings, new StubResourceManagementClient(), new NoOpLogger());
 
         var beforeShutdown = gate.Validate(CreateRequest("TestAction", riskScore: 10));
         Assert.Equal(ProtectionVerdict.Allow, beforeShutdown.Verdict);
@@ -113,5 +113,12 @@ public class EmergencyShutdownTests
             Func<TState, Exception?, string> formatter)
         {
         }
+    }
+
+    private sealed class StubResourceManagementClient : IResourceManagementClient
+    {
+        public double GetCurrentBudget(ResourceType resourceType) => 0;
+
+        public CapacityTier GetCurrentTier(ResourceType resourceType) => CapacityTier.Safe;
     }
 }
