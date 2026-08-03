@@ -92,8 +92,25 @@ public sealed class ProtectionGate(
         // step still passes absent that data (WP-013 Architecture Challenge, G1/G4). No
         // enforcement logic is added here, per WP-021's own scope boundary. WP-021: the real,
         // live-measured CPU budget is retrieved and logged alongside the configured ceiling,
-        // satisfying "Protection's ceiling check now cites this real value in its logs."
-        var measuredCpuBudget = resourceManagementClient.GetCurrentBudget(ResourceType.Cpu);
+        // satisfying "Protection's ceiling check now cites this real value in its logs." A
+        // measurement failure (e.g. an unreadable /proc/stat) must fail this action closed
+        // rather than let the exception escape Validate() and abort every other in-flight
+        // action's gating, matching the fail-closed pattern already used above for an
+        // out-of-range RiskScore.
+        double measuredCpuBudget;
+        try
+        {
+            measuredCpuBudget = resourceManagementClient.GetCurrentBudget(ResourceType.Cpu);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Protection resource ceiling check failed to measure CPU budget: ActionId={ActionId}", action.ActionId);
+            return new ValidationResult(
+                ProtectionVerdict.Deny,
+                RiskTier.High,
+                "Resource measurement failed; failing closed.");
+        }
+
         logger.LogInformation(
             "Protection resource ceiling check: ActionId={ActionId} ConfiguredCpuCeilingPercent={ConfiguredCeilingPercent} MeasuredCpuBudget={MeasuredCpuBudget}",
             action.ActionId, resourceCeilings.CpuCeilingPercent, measuredCpuBudget);

@@ -72,9 +72,17 @@ public sealed class ResourceMonitor(int samplingIntervalSeconds)
 
     // §18.2: "CPU | Utilization %, per-core and aggregate". Linux /proc/stat: aggregate CPU
     // utilization computed as the delta between this read and the previous cached raw counters
-    // (avoids an artificial blocking sleep to observe a delta within a single call).
+    // (avoids an artificial blocking sleep to observe a delta within a single call). No
+    // RuntimeIdentifier restricts this repository to Linux, so on any other OS this honestly
+    // reports 0% rather than throwing from a missing /proc filesystem, matching the existing
+    // "no real producer yet" pattern used by MeasureCacheUsagePercent.
     private double MeasureCpuUtilizationPercent()
     {
+        if (!OperatingSystem.IsLinux())
+        {
+            return 0.0;
+        }
+
         var (idle, total) = ReadProcStatCpuTotals();
 
         if (_previousCpuTotals is { } previous && total > previous.Total)
@@ -104,8 +112,14 @@ public sealed class ResourceMonitor(int samplingIntervalSeconds)
     }
 
     // §18.2: "RAM | Utilization, available headroom". Linux /proc/meminfo: MemTotal - MemAvailable.
+    // Same non-Linux fallback rationale as MeasureCpuUtilizationPercent above.
     private static double MeasureRamUsedMegabytes()
     {
+        if (!OperatingSystem.IsLinux())
+        {
+            return 0.0;
+        }
+
         var lines = File.ReadAllLines("/proc/meminfo");
         var totalKb = ParseMeminfoValueKb(lines, "MemTotal:");
         var availableKb = ParseMeminfoValueKb(lines, "MemAvailable:");
@@ -120,9 +134,16 @@ public sealed class ResourceMonitor(int samplingIntervalSeconds)
     }
 
     // §18.2: "Disk | Free space, I/O contention". Used space on the root filesystem, matching
-    // the existing DiskCeilingMegabytes' own used-space semantics (Constitution Part 10).
+    // the existing DiskCeilingMegabytes' own used-space semantics (Constitution Part 10). Same
+    // non-Linux fallback rationale as MeasureCpuUtilizationPercent above — "/" is not a valid
+    // drive identifier on every OS.
     private static double MeasureDiskUsedMegabytes()
     {
+        if (!OperatingSystem.IsLinux())
+        {
+            return 0.0;
+        }
+
         var root = new DriveInfo("/");
         return (root.TotalSize - root.AvailableFreeSpace) / (1024.0 * 1024.0);
     }
