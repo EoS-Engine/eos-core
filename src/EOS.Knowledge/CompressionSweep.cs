@@ -1,3 +1,4 @@
+using EOS.Contracts;
 using EOS.KnowledgeGraph;
 
 namespace EOS.Knowledge;
@@ -19,6 +20,11 @@ namespace EOS.Knowledge;
 /// <item>The entry has not been read recently (<see cref="IReadRecencyTracker"/>).</item>
 /// <item>No legal/compliance retention hold is set (<see cref="IRetentionHoldPolicy"/>).</item>
 /// </list>
+///
+/// WP-022: requests a Background Task Controller slot (§10.6, Resource-Management-
+/// Specification-v1.0 §15) before running, per the roadmap's own Expected Deliverable —
+/// "WP-016's Compression sweep... now request a slot before running, and are correctly deferred
+/// under simulated contention." Background Maintenance is this sweep's own §16 resource class.
 /// </summary>
 public sealed class CompressionSweep(
     KnowledgeGraphStore store,
@@ -27,10 +33,17 @@ public sealed class CompressionSweep(
     IReadRecencyTracker readRecencyTracker,
     IRetentionHoldPolicy retentionHoldPolicy,
     ISummarizer summarizer,
+    IBackgroundSlotRequester backgroundSlotRequester,
     IMemoryCompressedEventPublisher? memoryCompressedEventPublisher = null)
 {
     public async Task<int> RunAsync(CancellationToken cancellationToken = default)
     {
+        var jobId = $"compression-sweep-{Guid.NewGuid()}";
+        if (!backgroundSlotRequester.RequestSlot(jobId, ResourceClass.BackgroundMaintenance))
+        {
+            return 0;
+        }
+
         var eligibleEntries = await GetEligibleForCompressionAsync(cancellationToken);
 
         var compressedCount = 0;

@@ -9,7 +9,11 @@ namespace EOS.Resources;
 /// transition — the first-ever classification for a dimension establishes its initial resting
 /// state, not a "crossing".
 /// </summary>
-public sealed class CapacityManager(CapacityThresholds thresholds, IResourceThresholdCrossedEventPublisher eventPublisher)
+public sealed class CapacityManager(
+    CapacityThresholds thresholds,
+    IResourceThresholdCrossedEventPublisher eventPublisher,
+    IEmergencyCapacitySignalEventPublisher emergencyCapacitySignalEventPublisher,
+    IResourceRecoveredEventPublisher resourceRecoveredEventPublisher)
 {
     private readonly Dictionary<ResourceType, CapacityTier> _lastTier = [];
     private readonly Lock _lock = new();
@@ -19,19 +23,37 @@ public sealed class CapacityManager(CapacityThresholds thresholds, IResourceThre
         var boundaries = GetBoundaries(resourceType);
         var tier = Classify(measuredValue, boundaries);
 
-        // The lock protects only the _lastTier read/write (state); the event publish itself
-        // happens after the lock is released, so a slow or re-entrant subscriber can never
-        // block another thread's tier computation or deadlock against this same lock.
+        // The lock protects only the _lastTier read/write (state); the event publishes
+        // themselves happen after the lock is released, so a slow or re-entrant subscriber can
+        // never block another thread's tier computation or deadlock against this same lock.
         bool shouldPublish;
+        CapacityTier previousTierForTransitionEvents = default;
+        bool hadPreviousTier;
         lock (_lock)
         {
-            shouldPublish = _lastTier.TryGetValue(resourceType, out var previousTier) && previousTier != tier;
+            hadPreviousTier = _lastTier.TryGetValue(resourceType, out var previousTier);
+            previousTierForTransitionEvents = previousTier;
+            shouldPublish = hadPreviousTier && previousTier != tier;
             _lastTier[resourceType] = tier;
         }
 
         if (shouldPublish)
         {
             eventPublisher.PublishResourceThresholdCrossed(resourceType, tier);
+
+            // WP-022 Implementation Plan Decision D6 — §17.4/§19.5's exact trigger conditions,
+            // derived from this same already-existing transition detection.
+            if (tier == CapacityTier.Emergency)
+            {
+                emergencyCapacitySignalEventPublisher.PublishEmergencyCapacitySignal(resourceType, measuredValue);
+            }
+
+            if (hadPreviousTier
+                && previousTierForTransitionEvents is CapacityTier.Critical or CapacityTier.Emergency
+                && tier == CapacityTier.Safe)
+            {
+                resourceRecoveredEventPublisher.PublishResourceRecovered(resourceType);
+            }
         }
 
         return tier;

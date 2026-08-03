@@ -31,6 +31,7 @@ public class CompressionSweepTests
             new FixedReadRecencyTracker(readRecently: false),
             new FixedRetentionHoldPolicy(hasActiveHold: false),
             summarizer,
+            new AlwaysGrantBackgroundSlotRequester(),
             eventPublisher);
 
         var compressedCount = await sweep.RunAsync(CancellationToken.None);
@@ -68,6 +69,7 @@ public class CompressionSweepTests
             new FixedReadRecencyTracker(readRecently: false),
             new FixedRetentionHoldPolicy(hasActiveHold: false),
             new FixedSummarizer("should never be called"),
+            new AlwaysGrantBackgroundSlotRequester(),
             eventPublisher);
 
         await sweep.RunAsync(CancellationToken.None);
@@ -100,6 +102,7 @@ public class CompressionSweepTests
             new FixedReadRecencyTracker(readRecently: true),
             new FixedRetentionHoldPolicy(hasActiveHold: false),
             new FixedSummarizer("should never be called"),
+            new AlwaysGrantBackgroundSlotRequester(),
             eventPublisher);
 
         await sweep.RunAsync(CancellationToken.None);
@@ -132,6 +135,7 @@ public class CompressionSweepTests
             new FixedReadRecencyTracker(readRecently: false),
             new FixedRetentionHoldPolicy(hasActiveHold: true),
             new FixedSummarizer("should never be called"),
+            new AlwaysGrantBackgroundSlotRequester(),
             eventPublisher);
 
         await sweep.RunAsync(CancellationToken.None);
@@ -170,6 +174,55 @@ public class CompressionSweepTests
     {
         public Task<string> SummarizeAsync(string content, CancellationToken cancellationToken = default) =>
             Task.FromResult(summary);
+    }
+
+    private sealed class AlwaysGrantBackgroundSlotRequester : IBackgroundSlotRequester
+    {
+        public bool RequestSlot(string jobId, EOS.Contracts.ResourceClass resourceClass) => true;
+    }
+
+    private sealed class AlwaysDeferBackgroundSlotRequester : IBackgroundSlotRequester
+    {
+        public bool RequestSlot(string jobId, EOS.Contracts.ResourceClass resourceClass) => false;
+    }
+
+    // WP-022 CodeRabbit review Finding 2: the roadmap's own required deferral behavior
+    // ("correctly deferred under simulated contention") had no test at CompressionSweep's own
+    // integration point — only one layer down, in BackgroundTaskController/QuotaManager.
+    [Fact]
+    public async Task RunAsync_PerformsNoCompressionWork_WhenTheBackgroundSlotIsDeferred()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var archivedContentStore = new ArchivedContentStore(ConnectionString);
+        await archivedContentStore.EnsureTableExistsAsync(CancellationToken.None);
+
+        var nodeId = Guid.NewGuid();
+        var originalContent = $"a lesson that would be eligible, if the slot were granted {Guid.NewGuid()}";
+        await store.UpsertAsync(
+            new KnowledgeNode(nodeId, KnowledgeNodeType.Lesson, originalContent, [], [], DateTimeOffset.UtcNow),
+            CancellationToken.None);
+
+        var eventPublisher = new CapturingMemoryCompressedEventPublisher();
+        var sweep = new CompressionSweep(
+            store,
+            archivedContentStore,
+            new FixedPipelineStageStore(nodeId),
+            new FixedReadRecencyTracker(readRecently: false),
+            new FixedRetentionHoldPolicy(hasActiveHold: false),
+            new FixedSummarizer("should never be called"),
+            new AlwaysDeferBackgroundSlotRequester(),
+            eventPublisher);
+
+        var compressedCount = await sweep.RunAsync(CancellationToken.None);
+
+        var untouchedNode = await store.GetByIdAsync(nodeId, CancellationToken.None);
+        var archivedContent = await archivedContentStore.GetLatestArchivedContentBySourceNodeIdAsync(nodeId, CancellationToken.None);
+        Assert.Equal(0, compressedCount);
+        Assert.NotNull(untouchedNode);
+        Assert.Equal(originalContent, untouchedNode.Content);
+        Assert.Null(archivedContent);
+        Assert.DoesNotContain(nodeId, eventPublisher.PublishedEntryIds);
     }
 
     private sealed class CapturingMemoryCompressedEventPublisher : IMemoryCompressedEventPublisher

@@ -21,4 +21,8 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="EOS.Runner.Tests" />
+  </ItemGroup>
+
 </Project>

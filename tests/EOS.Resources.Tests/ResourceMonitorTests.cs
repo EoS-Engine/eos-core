@@ -8,7 +8,7 @@ public class ResourceMonitorTests
     [Fact]
     public void Sample_ReturnsNonNegativeCpuUtilization()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 30);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 30, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
 
         var value = monitor.Sample(ResourceType.Cpu);
 
@@ -18,7 +18,7 @@ public class ResourceMonitorTests
     [Fact]
     public void Sample_ReturnsPositiveRamUsed()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 30);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 30, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
 
         var value = monitor.Sample(ResourceType.Ram);
 
@@ -28,7 +28,7 @@ public class ResourceMonitorTests
     [Fact]
     public void Sample_ReturnsPositiveDiskUsed()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 30);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 30, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
 
         var value = monitor.Sample(ResourceType.Disk);
 
@@ -38,7 +38,7 @@ public class ResourceMonitorTests
     [Fact]
     public void Sample_ThrottlesRepeatedCallsWithinInterval()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
 
         var first = monitor.Sample(ResourceType.Ram);
         var second = monitor.Sample(ResourceType.Ram);
@@ -49,7 +49,7 @@ public class ResourceMonitorTests
     [Fact]
     public void RecordTaskStarted_IncrementsQueueLengthAndBackgroundTasks()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         var taskId = Guid.NewGuid();
 
         monitor.RecordTaskStarted(taskId);
@@ -61,7 +61,7 @@ public class ResourceMonitorTests
     [Fact]
     public void RecordTaskCompleted_DecrementsActiveTaskCount()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         var taskId = Guid.NewGuid();
         monitor.RecordTaskStarted(taskId);
 
@@ -73,7 +73,7 @@ public class ResourceMonitorTests
     [Fact]
     public void RecordTaskCompleted_NeverGoesNegative_WhenCalledWithoutAPriorStart()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
 
         monitor.RecordTaskCompleted(Guid.NewGuid());
 
@@ -83,7 +83,7 @@ public class ResourceMonitorTests
     [Fact]
     public void RecordTaskBlocked_DecrementsActiveTaskCount()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         var taskId = Guid.NewGuid();
         monitor.RecordTaskStarted(taskId);
 
@@ -95,7 +95,7 @@ public class ResourceMonitorTests
     [Fact]
     public void RecordInferenceRouted_IncrementsModelUsage()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
 
         monitor.RecordInferenceRouted("qwen2.5-coder:7b");
 
@@ -105,7 +105,7 @@ public class ResourceMonitorTests
     [Fact]
     public void RecordInferenceCompleted_DecrementsModelUsage()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         monitor.RecordInferenceRouted("qwen2.5-coder:7b");
 
         monitor.RecordInferenceCompleted("qwen2.5-coder:7b");
@@ -116,7 +116,7 @@ public class ResourceMonitorTests
     [Fact]
     public void Sample_ReturnsZero_ForCacheUsage_WhenNoCacheTierStoreExists()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 30);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 30, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
 
         var value = monitor.Sample(ResourceType.CacheUsage);
 
@@ -132,7 +132,7 @@ public class ResourceMonitorTests
     [Fact]
     public void Sample_ObservesRecordTaskStarted_ImmediatelyWithoutWaitingForSamplingInterval()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         Assert.Equal(0, monitor.Sample(ResourceType.QueueLength));
         Assert.Equal(0, monitor.Sample(ResourceType.BackgroundTasks));
 
@@ -145,7 +145,7 @@ public class ResourceMonitorTests
     [Fact]
     public void Sample_ObservesRecordTaskCompleted_ImmediatelyWithoutWaitingForSamplingInterval()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         var taskId = Guid.NewGuid();
         monitor.RecordTaskStarted(taskId);
         Assert.Equal(1, monitor.Sample(ResourceType.BackgroundTasks));
@@ -158,7 +158,7 @@ public class ResourceMonitorTests
     [Fact]
     public void Sample_ObservesRecordTaskBlocked_ImmediatelyWithoutWaitingForSamplingInterval()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         var taskId = Guid.NewGuid();
         monitor.RecordTaskStarted(taskId);
         Assert.Equal(1, monitor.Sample(ResourceType.QueueLength));
@@ -171,7 +171,7 @@ public class ResourceMonitorTests
     [Fact]
     public void Sample_ObservesRecordInferenceRouted_ImmediatelyWithoutWaitingForSamplingInterval()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         Assert.Equal(0, monitor.Sample(ResourceType.ModelUsage));
 
         monitor.RecordInferenceRouted("qwen2.5-coder:7b");
@@ -182,7 +182,7 @@ public class ResourceMonitorTests
     [Fact]
     public void Sample_ObservesRecordInferenceCompleted_ImmediatelyWithoutWaitingForSamplingInterval()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         monitor.RecordInferenceRouted("qwen2.5-coder:7b");
         Assert.Equal(1, monitor.Sample(ResourceType.ModelUsage));
 
@@ -196,7 +196,7 @@ public class ResourceMonitorTests
     {
         // Confirms the CQ-1 fix is scoped to the three event-driven dimensions only - CPU/RAM/
         // Disk/Cache remain throttled exactly as before.
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         var first = monitor.Sample(ResourceType.Ram);
 
         monitor.RecordTaskStarted(Guid.NewGuid());

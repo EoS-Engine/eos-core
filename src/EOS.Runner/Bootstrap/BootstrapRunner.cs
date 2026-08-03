@@ -173,6 +173,42 @@ public sealed class BootstrapRunner(ILogger<BootstrapRunner> logger)
                 }
             }
 
+            // Resource-Management-Specification-v1.0 §19.1: "each resource-class receives at
+            // least its configured minimum share" — the rank-1 (UserRequests) class must never
+            // have a smaller quota than a lower-ranked class, for each of the 3 quota-bearing
+            // resource types (§19.2).
+            var quotaRankTriples = new (string ResourceType, double[] RankedQuotas)[]
+            {
+                ("CpuQuota", [
+                    thresholdsOptions.CpuQuotaUserRequestsPercent, thresholdsOptions.CpuQuotaInteractiveSessionsPercent,
+                    thresholdsOptions.CpuQuotaAutonomousTasksPercent, thresholdsOptions.CpuQuotaBackgroundMaintenancePercent,
+                    thresholdsOptions.CpuQuotaLearningActivitiesPercent,
+                ]),
+                ("RamQuota", [
+                    thresholdsOptions.RamQuotaUserRequestsMegabytes, thresholdsOptions.RamQuotaInteractiveSessionsMegabytes,
+                    thresholdsOptions.RamQuotaAutonomousTasksMegabytes, thresholdsOptions.RamQuotaBackgroundMaintenanceMegabytes,
+                    thresholdsOptions.RamQuotaLearningActivitiesMegabytes,
+                ]),
+                ("ModelSlotQuota", [
+                    thresholdsOptions.ModelSlotQuotaUserRequestsCount, thresholdsOptions.ModelSlotQuotaInteractiveSessionsCount,
+                    thresholdsOptions.ModelSlotQuotaAutonomousTasksCount, thresholdsOptions.ModelSlotQuotaBackgroundMaintenanceCount,
+                    thresholdsOptions.ModelSlotQuotaLearningActivitiesCount,
+                ]),
+            };
+
+            foreach (var (resourceType, rankedQuotas) in quotaRankTriples)
+            {
+                for (var i = 1; i < rankedQuotas.Length; i++)
+                {
+                    if (rankedQuotas[i] > rankedQuotas[i - 1])
+                    {
+                        throw new ConfigurationValidationException(
+                            $"ThresholdsOptions.{resourceType} values must be non-increasing by §16 resource-class rank " +
+                            $"(got a lower-ranked class with a larger quota than a higher-ranked one).");
+                    }
+                }
+            }
+
             if (storeHealthResults is null || storeHealthResults.Any(r => !r.Healthy))
             {
                 throw new ConfigurationValidationException("Not all data stores reported healthy during Start Infrastructure.");

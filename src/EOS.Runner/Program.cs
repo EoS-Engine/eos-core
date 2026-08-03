@@ -107,7 +107,11 @@ try
     var eventMediator = new EventMediator();
 
     // WP-021: Resource Management (Resource-Management-Specification-v1.0 §10.2/§10.3/§17/§18).
-    var resourceMonitor = new ResourceMonitor(thresholdsOptions.ResourceSamplingIntervalSeconds);
+    var resourceMonitor = new ResourceMonitor(
+        thresholdsOptions.ResourceSamplingIntervalSeconds,
+        thresholdsOptions.ModelIdleResidencyTimeoutSeconds,
+        new EventMediatorModelLoadedEventPublisher(eventMediator),
+        new EventMediatorModelUnloadedEventPublisher(eventMediator));
     var capacityThresholds = new CapacityThresholds(
         Cpu: new ResourceTierBoundaries(
             thresholdsOptions.CpuWarningThresholdPercent, thresholdsOptions.CpuCriticalThresholdPercent, thresholdsOptions.CpuEmergencyThresholdPercent),
@@ -123,8 +127,32 @@ try
             thresholdsOptions.BackgroundTasksWarningThresholdCount, thresholdsOptions.BackgroundTasksCriticalThresholdCount, thresholdsOptions.BackgroundTasksEmergencyThresholdCount),
         CacheUsage: new ResourceTierBoundaries(
             thresholdsOptions.CacheUsageWarningThresholdPercent, thresholdsOptions.CacheUsageCriticalThresholdPercent, thresholdsOptions.CacheUsageEmergencyThresholdPercent));
-    var capacityManager = new CapacityManager(capacityThresholds, new EventMediatorResourceThresholdCrossedEventPublisher(eventMediator));
-    var resourceManagementClient = new ResourceManagementClient(resourceMonitor, capacityManager);
+    var capacityManager = new CapacityManager(
+        capacityThresholds,
+        new EventMediatorResourceThresholdCrossedEventPublisher(eventMediator),
+        new EventMediatorEmergencyCapacitySignalEventPublisher(eventMediator),
+        new EventMediatorResourceRecoveredEventPublisher(eventMediator));
+
+    // WP-022: Resource Management Quotas/Background Task Controller/Model Residency
+    // (Resource-Management-Specification-v1.0 §10.4/§10.6/§14/§16/§19).
+    var resourceClassQuotas = new ResourceClassQuotas(
+        UserRequests: new ResourceClassQuota(thresholdsOptions.CpuQuotaUserRequestsPercent, thresholdsOptions.RamQuotaUserRequestsMegabytes, thresholdsOptions.ModelSlotQuotaUserRequestsCount),
+        InteractiveSessions: new ResourceClassQuota(thresholdsOptions.CpuQuotaInteractiveSessionsPercent, thresholdsOptions.RamQuotaInteractiveSessionsMegabytes, thresholdsOptions.ModelSlotQuotaInteractiveSessionsCount),
+        AutonomousTasks: new ResourceClassQuota(thresholdsOptions.CpuQuotaAutonomousTasksPercent, thresholdsOptions.RamQuotaAutonomousTasksMegabytes, thresholdsOptions.ModelSlotQuotaAutonomousTasksCount),
+        BackgroundMaintenance: new ResourceClassQuota(thresholdsOptions.CpuQuotaBackgroundMaintenancePercent, thresholdsOptions.RamQuotaBackgroundMaintenanceMegabytes, thresholdsOptions.ModelSlotQuotaBackgroundMaintenanceCount),
+        LearningActivities: new ResourceClassQuota(thresholdsOptions.CpuQuotaLearningActivitiesPercent, thresholdsOptions.RamQuotaLearningActivitiesMegabytes, thresholdsOptions.ModelSlotQuotaLearningActivitiesCount));
+    var quotaManager = new QuotaManager(
+        resourceClassQuotas,
+        thresholdsOptions.QuotaStarvationDenialCountThreshold,
+        thresholdsOptions.QuotaWindowSeconds,
+        new EventMediatorResourceQuotaExhaustedEventPublisher(eventMediator));
+    var backgroundTaskController = new BackgroundTaskController(
+        () => capacityManager.ComputeTier(ResourceType.Cpu, resourceMonitor.Sample(ResourceType.Cpu)),
+        quotaManager,
+        new EventMediatorBackgroundJobGrantedEventPublisher(eventMediator),
+        new EventMediatorBackgroundJobDeferredEventPublisher(eventMediator));
+
+    var resourceManagementClient = new ResourceManagementClient(resourceMonitor, capacityManager, backgroundTaskController);
 
     // §20.1 Consumed Events: TaskStarted/TaskCompleted/TaskBlocked inform Queue Length/
     // Background Task observation; InferenceRouted/InferenceCompleted inform Model Usage
@@ -218,6 +246,7 @@ try
         new NeverReadRecentlyStub(),
         new NoActiveRetentionHoldsStub(),
         new ReasoningEngineSummarizerAdapter(reasoningEngine, thresholdsOptions.SummarizationStubTruncationLength),
+        new ResourceManagementBackgroundSlotRequester(resourceManagementClient, eventMediator),
         new EventMediatorMemoryCompressedEventPublisher(eventMediator));
     // Real, independently tested infrastructure with no production caller yet (mirrors
     // RedisMemoryStore's own WP-014 precedent) — no WP before this one writes production
@@ -382,6 +411,107 @@ internal sealed class EventMediatorResourceThresholdCrossedEventPublisher(EventM
     }
 }
 
+// WP-022: Resource-Management-Specification-v1.0 §20's remaining 6 new events (all producers
+// already named by §20's own table; adapters follow the exact Composition Root Adapter Pattern
+// (ADR-015-001) established above for ResourceThresholdCrossed, WP-021).
+internal sealed record BackgroundJobGrantedPayload(string JobId, ResourceClass ResourceClass);
+
+internal sealed class EventMediatorBackgroundJobGrantedEventPublisher(EventMediator eventMediator) : IBackgroundJobGrantedEventPublisher
+{
+    public void PublishBackgroundJobGranted(string jobId, ResourceClass resourceClass)
+    {
+        eventMediator.Publish(EventEnvelope<BackgroundJobGrantedPayload>.Create(
+            eventType: "BackgroundJobGranted",
+            version: "v1",
+            producer: "EOS.Resources",
+            payload: new BackgroundJobGrantedPayload(jobId, resourceClass)));
+    }
+}
+
+internal sealed record BackgroundJobDeferredPayload(string JobId, string Reason);
+
+internal sealed class EventMediatorBackgroundJobDeferredEventPublisher(EventMediator eventMediator) : IBackgroundJobDeferredEventPublisher
+{
+    public void PublishBackgroundJobDeferred(string jobId, string reason)
+    {
+        eventMediator.Publish(EventEnvelope<BackgroundJobDeferredPayload>.Create(
+            eventType: "BackgroundJobDeferred",
+            version: "v1",
+            producer: "EOS.Resources",
+            payload: new BackgroundJobDeferredPayload(jobId, reason)));
+    }
+}
+
+internal sealed record ModelLoadedPayload(string ModelId, double RamFootprint);
+
+internal sealed class EventMediatorModelLoadedEventPublisher(EventMediator eventMediator) : IModelLoadedEventPublisher
+{
+    public void PublishModelLoaded(string modelId, double ramFootprintMegabytes)
+    {
+        eventMediator.Publish(EventEnvelope<ModelLoadedPayload>.Create(
+            eventType: "ModelLoaded",
+            version: "v1",
+            producer: "EOS.Resources",
+            payload: new ModelLoadedPayload(modelId, ramFootprintMegabytes)));
+    }
+}
+
+internal sealed record ModelUnloadedPayload(string ModelId, double RamFootprint);
+
+internal sealed class EventMediatorModelUnloadedEventPublisher(EventMediator eventMediator) : IModelUnloadedEventPublisher
+{
+    public void PublishModelUnloaded(string modelId, double ramFootprintMegabytes)
+    {
+        eventMediator.Publish(EventEnvelope<ModelUnloadedPayload>.Create(
+            eventType: "ModelUnloaded",
+            version: "v1",
+            producer: "EOS.Resources",
+            payload: new ModelUnloadedPayload(modelId, ramFootprintMegabytes)));
+    }
+}
+
+internal sealed record ResourceQuotaExhaustedPayload(ResourceClass ResourceClass, ResourceType ResourceType);
+
+internal sealed class EventMediatorResourceQuotaExhaustedEventPublisher(EventMediator eventMediator) : IResourceQuotaExhaustedEventPublisher
+{
+    public void PublishResourceQuotaExhausted(ResourceClass resourceClass, ResourceType resourceType)
+    {
+        eventMediator.Publish(EventEnvelope<ResourceQuotaExhaustedPayload>.Create(
+            eventType: "ResourceQuotaExhausted",
+            version: "v1",
+            producer: "EOS.Resources",
+            payload: new ResourceQuotaExhaustedPayload(resourceClass, resourceType)));
+    }
+}
+
+internal sealed record EmergencyCapacitySignalPayload(ResourceType ResourceType, double MeasuredValue);
+
+internal sealed class EventMediatorEmergencyCapacitySignalEventPublisher(EventMediator eventMediator) : IEmergencyCapacitySignalEventPublisher
+{
+    public void PublishEmergencyCapacitySignal(ResourceType resourceType, double measuredValue)
+    {
+        eventMediator.Publish(EventEnvelope<EmergencyCapacitySignalPayload>.Create(
+            eventType: "EmergencyCapacitySignal",
+            version: "v1",
+            producer: "EOS.Resources",
+            payload: new EmergencyCapacitySignalPayload(resourceType, measuredValue)));
+    }
+}
+
+internal sealed record ResourceRecoveredPayload(ResourceType ResourceType);
+
+internal sealed class EventMediatorResourceRecoveredEventPublisher(EventMediator eventMediator) : IResourceRecoveredEventPublisher
+{
+    public void PublishResourceRecovered(ResourceType resourceType)
+    {
+        eventMediator.Publish(EventEnvelope<ResourceRecoveredPayload>.Create(
+            eventType: "ResourceRecovered",
+            version: "v1",
+            producer: "EOS.Resources",
+            payload: new ResourceRecoveredPayload(resourceType)));
+    }
+}
+
 // §20.1 Consumed Events (WP-021 Implementation Plan Decision D6): Constitution Part 3's
 // TaskStarted/TaskCompleted/TaskBlocked payload fields (task_id, actor_role/started_at,
 // evidence_refs[], blocking_gate/reason) — only task_id is needed by ResourceMonitor's
@@ -466,6 +596,49 @@ internal sealed class NoActiveRetentionHoldsStub : IRetentionHoldPolicy
 }
 
 internal sealed record MemoryCompressedPayload(Guid EntryId, int OriginalSize, int SummarySize);
+
+/// <summary>
+/// WP-022: real backing for <see cref="IBackgroundSlotRequester"/> (see that interface's own
+/// documentation for why). <see cref="IResourceManagementClient.RequestBackgroundSlot"/> is
+/// <c>void</c> (§21.1) — this adapter subscribes once, permanently, to <c>BackgroundJobGranted</c>/
+/// <c>BackgroundJobDeferred</c> (mirroring every other permanent <see cref="EventMediator"/>
+/// subscription in this composition root) and correlates the outcome by <c>job_id</c>. Because
+/// <see cref="EventMediator.Publish{TPayload}"/> is synchronous and in-process, the correlating
+/// handler has already run by the time <c>RequestBackgroundSlot</c> returns control here.
+/// </summary>
+internal sealed class ResourceManagementBackgroundSlotRequester : IBackgroundSlotRequester
+{
+    private readonly IResourceManagementClient _resourceManagementClient;
+    private readonly Lock _lock = new();
+    private readonly Dictionary<string, bool> _outcomesByJobId = [];
+
+    public ResourceManagementBackgroundSlotRequester(IResourceManagementClient resourceManagementClient, EventMediator eventMediator)
+    {
+        _resourceManagementClient = resourceManagementClient;
+        eventMediator.Subscribe<BackgroundJobGrantedPayload>(envelope => RecordOutcome(envelope.Payload.JobId, granted: true));
+        eventMediator.Subscribe<BackgroundJobDeferredPayload>(envelope => RecordOutcome(envelope.Payload.JobId, granted: false));
+    }
+
+    public bool RequestSlot(string jobId, ResourceClass resourceClass)
+    {
+        _resourceManagementClient.RequestBackgroundSlot(jobId, resourceClass);
+
+        lock (_lock)
+        {
+            var granted = _outcomesByJobId.TryGetValue(jobId, out var outcome) && outcome;
+            _outcomesByJobId.Remove(jobId);
+            return granted;
+        }
+    }
+
+    private void RecordOutcome(string jobId, bool granted)
+    {
+        lock (_lock)
+        {
+            _outcomesByJobId[jobId] = granted;
+        }
+    }
+}
 
 internal sealed class EventMediatorMemoryCompressedEventPublisher(EventMediator eventMediator) : IMemoryCompressedEventPublisher
 {

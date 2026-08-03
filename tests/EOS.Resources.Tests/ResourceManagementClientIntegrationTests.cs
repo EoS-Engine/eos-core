@@ -25,7 +25,7 @@ public class ResourceManagementClientIntegrationTests
     [Fact]
     public void GetCurrentBudget_RecordsRealCpuRamDiskMeasurements_WithTheRealInfrastructureStackRunning()
     {
-        var monitor = new ResourceMonitor(samplingIntervalSeconds: 1);
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 1, modelIdleResidencyTimeoutSeconds: 900, new NoOpModelLoadedEventPublisher(), new NoOpModelUnloadedEventPublisher());
         var thresholds = new CapacityThresholds(
             Cpu: new ResourceTierBoundaries(75, 90, 97),
             Ram: new ResourceTierBoundaries(6000, 7200, 7800),
@@ -34,7 +34,12 @@ public class ResourceManagementClientIntegrationTests
             QueueLength: new ResourceTierBoundaries(50, 100, 150),
             BackgroundTasks: new ResourceTierBoundaries(2, 3, 4),
             CacheUsage: new ResourceTierBoundaries(70, 85, 95));
-        var client = new ResourceManagementClient(monitor, new CapacityManager(thresholds, new NoOpResourceThresholdCrossedEventPublisher()));
+        var capacityManager = new CapacityManager(thresholds, new NoOpResourceThresholdCrossedEventPublisher(), new NoOpEmergencyCapacitySignalEventPublisher(), new NoOpResourceRecoveredEventPublisher());
+        var quotaManager = new QuotaManager(TestResourceClassQuotas.Default, starvationDenialCountThreshold: 3, windowSeconds: 30, new NoOpResourceQuotaExhaustedEventPublisher());
+        var controller = new BackgroundTaskController(
+            () => capacityManager.ComputeTier(ResourceType.Cpu, monitor.Sample(ResourceType.Cpu)),
+            quotaManager, new NoOpBackgroundJobGrantedEventPublisher(), new NoOpBackgroundJobDeferredEventPublisher());
+        var client = new ResourceManagementClient(monitor, capacityManager, controller);
 
         var cpuBudget = client.GetCurrentBudget(ResourceType.Cpu);
         var ramBudget = client.GetCurrentBudget(ResourceType.Ram);
@@ -50,12 +55,5 @@ public class ResourceManagementClientIntegrationTests
         Assert.True(Enum.IsDefined(client.GetCurrentTier(ResourceType.Cpu)));
         Assert.True(Enum.IsDefined(client.GetCurrentTier(ResourceType.Ram)));
         Assert.True(Enum.IsDefined(client.GetCurrentTier(ResourceType.Disk)));
-    }
-
-    private sealed class NoOpResourceThresholdCrossedEventPublisher : IResourceThresholdCrossedEventPublisher
-    {
-        public void PublishResourceThresholdCrossed(ResourceType resourceType, CapacityTier tier)
-        {
-        }
     }
 }
