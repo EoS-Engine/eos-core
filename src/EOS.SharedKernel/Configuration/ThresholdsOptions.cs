@@ -161,4 +161,75 @@ public sealed record ThresholdsOptions
     // (WP-021 Implementation Plan, Sampling Strategy).
     [Range(1, int.MaxValue)]
     public required int ResourceSamplingIntervalSeconds { get; init; }
+
+    // Resource Management Fair-Share Quotas (Resource-Management-Specification-v1.0 §10.4,
+    // §19.1-§19.2): per-resource-class ceilings for the 3 named resource types (§19.2: "CPU/RAM/
+    // Model-slot"), one field per §16 resource-class per type (WP-022 Implementation Plan
+    // Decision D5). Validated at BootstrapRunner startup: rank 1 (UserRequests) >= rank 2
+    // (InteractiveSessions) >= ... >= rank 5 (LearningActivities), per §19.1's "each resource-
+    // class receives at least its configured minimum share."
+    [Range(0, 100)]
+    public required int CpuQuotaUserRequestsPercent { get; init; }
+
+    [Range(0, 100)]
+    public required int CpuQuotaInteractiveSessionsPercent { get; init; }
+
+    [Range(0, 100)]
+    public required int CpuQuotaAutonomousTasksPercent { get; init; }
+
+    [Range(0, 100)]
+    public required int CpuQuotaBackgroundMaintenancePercent { get; init; }
+
+    [Range(0, 100)]
+    public required int CpuQuotaLearningActivitiesPercent { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int RamQuotaUserRequestsMegabytes { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int RamQuotaInteractiveSessionsMegabytes { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int RamQuotaAutonomousTasksMegabytes { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int RamQuotaBackgroundMaintenanceMegabytes { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int RamQuotaLearningActivitiesMegabytes { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int ModelSlotQuotaUserRequestsCount { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int ModelSlotQuotaInteractiveSessionsCount { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int ModelSlotQuotaAutonomousTasksCount { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int ModelSlotQuotaBackgroundMaintenanceCount { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int ModelSlotQuotaLearningActivitiesCount { get; init; }
+
+    // §19.4 Starvation Prevention: "denied allocation for more than a configured number of
+    // consecutive Sprint cycles." No Sprint-cycle clock exists anywhere in this codebase
+    // (pre-existing, disclosed condition — same as CompressionSweep.cs's cadence gap, WP-016);
+    // this counts consecutive Background Task Controller evaluations that defer a class instead
+    // (WP-022 Implementation Plan Decision D4).
+    [Range(1, int.MaxValue)]
+    public required int QuotaStarvationDenialCountThreshold { get; init; }
+
+    // §14.2 Model Unloading: idle-residency timeout before a Resident model becomes eligible for
+    // eviction.
+    [Range(1, int.MaxValue)]
+    public required int ModelIdleResidencyTimeoutSeconds { get; init; }
+
+    // Resource-Management-Specification-v1.0 §19.2's Quota Manager rolling-window duration (WP-
+    // 022 Implementation Plan Decision D9) — dedicated field, distinct from
+    // ResourceSamplingIntervalSeconds (§18.1's unrelated OS-measurement cadence), per WP-022
+    // Recovery Plan Slice R4/Finding F6.
+    [Range(1, int.MaxValue)]
+    public required int QuotaWindowSeconds { get; init; }
 }

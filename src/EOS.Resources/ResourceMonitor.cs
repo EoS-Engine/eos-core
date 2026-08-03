@@ -21,13 +21,15 @@ namespace EOS.Resources;
 /// time since that dimension's last sample is at or beyond the configured interval; otherwise
 /// the cached value is returned.
 /// </summary>
-public sealed class ResourceMonitor(int samplingIntervalSeconds)
+public sealed class ResourceMonitor(int samplingIntervalSeconds, int modelIdleResidencyTimeoutSeconds, IModelLoadedEventPublisher modelLoadedEventPublisher, IModelUnloadedEventPublisher modelUnloadedEventPublisher)
 {
     private readonly Dictionary<ResourceType, (DateTimeOffset SampledAt, double Value)> _cache = [];
     private readonly Lock _lock = new();
 
     private int _activeTaskCount;
     private int _activeInferenceCount;
+
+    private readonly Dictionary<string, (ModelResidencyState State, double? RamFootprintMegabytes, DateTimeOffset LastUsedAt)> _modelResidency = [];
 
     public double Sample(ResourceType resourceType)
     {
@@ -182,9 +184,42 @@ public sealed class ResourceMonitor(int samplingIntervalSeconds)
 
     public void RecordInferenceRouted(string model)
     {
+        bool firstObservation;
+
         lock (_lock)
         {
             _activeInferenceCount++;
+
+            var now = DateTimeOffset.UtcNow;
+            firstObservation = !_modelResidency.TryGetValue(model, out var existing) || existing.State == ModelResidencyState.Unloaded;
+
+            if (firstObservation)
+            {
+                // §14.1: "reactively (on first infer()/embed() request requiring it)". No
+                // separate load-started/load-finished signal exists anywhere in this repository
+                // or any frozen document (AI-Provider-Layer-Specification-v1.0's own
+                // InferenceRouted/InferenceCompleted, §19, carry no such marker, and the model is
+                // already resident by the time InferenceRouted fires) — there is no legal instant
+                // to bookend a real "before loading"/"after loading" RAM delta. Reporting
+                // <see langword="null"/> is the honest signal (WP-022 Recovery Plan Slice
+                // R3/Finding F4), matching the same "no real producer yet" precedent already
+                // established by <see cref="MeasureCacheUsagePercent"/>, rather than fabricating
+                // a delta that would always be ~0 regardless of the model's real footprint.
+                _modelResidency[model] = (ModelResidencyState.Resident, null, now);
+            }
+            else
+            {
+                _modelResidency[model] = (ModelResidencyState.Resident, existing.RamFootprintMegabytes, now);
+            }
+        }
+
+        if (firstObservation)
+        {
+            // §20's ModelLoaded payload (model_id, ram_footprint) requires a non-nullable value;
+            // 0.0 is the disclosed "unmeasurable" sentinel (WP-022 Recovery Plan Slice
+            // R3/Finding F4) — the model becoming Resident is itself real and worth publishing,
+            // even though its footprint cannot be legally measured.
+            modelLoadedEventPublisher.PublishModelLoaded(model, 0.0);
         }
     }
 
@@ -194,5 +229,41 @@ public sealed class ResourceMonitor(int samplingIntervalSeconds)
         {
             _activeInferenceCount = Math.Max(0, _activeInferenceCount - 1);
         }
+    }
+
+    /// <summary>
+    /// §21.1/§14.3: read-only residency signal. Idle-residency eviction (§14.2) is checked here,
+    /// pull-based per call — matching this same class's existing Sampling Model (§18.1) rather
+    /// than a background timer.
+    /// </summary>
+    public ModelResidencyStatus GetModelResidency(string modelId)
+    {
+        bool evicted;
+        double? footprintAtEviction = null;
+
+        lock (_lock)
+        {
+            if (!_modelResidency.TryGetValue(modelId, out var current))
+            {
+                return new ModelResidencyStatus(modelId, ModelResidencyState.Unloaded, null);
+            }
+
+            evicted = current.State == ModelResidencyState.Resident
+                && (DateTimeOffset.UtcNow - current.LastUsedAt).TotalSeconds >= modelIdleResidencyTimeoutSeconds;
+
+            if (evicted)
+            {
+                footprintAtEviction = current.RamFootprintMegabytes;
+                _modelResidency[modelId] = (ModelResidencyState.Unloaded, current.RamFootprintMegabytes, current.LastUsedAt);
+            }
+            else
+            {
+                current = _modelResidency[modelId];
+                return new ModelResidencyStatus(modelId, current.State, current.RamFootprintMegabytes);
+            }
+        }
+
+        modelUnloadedEventPublisher.PublishModelUnloaded(modelId, footprintAtEviction ?? 0.0);
+        return new ModelResidencyStatus(modelId, ModelResidencyState.Unloaded, footprintAtEviction);
     }
 }

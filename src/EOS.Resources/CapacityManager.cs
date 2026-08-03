@@ -9,9 +9,20 @@ namespace EOS.Resources;
 /// transition — the first-ever classification for a dimension establishes its initial resting
 /// state, not a "crossing".
 /// </summary>
-public sealed class CapacityManager(CapacityThresholds thresholds, IResourceThresholdCrossedEventPublisher eventPublisher)
+public sealed class CapacityManager(
+    CapacityThresholds thresholds,
+    IResourceThresholdCrossedEventPublisher eventPublisher,
+    IEmergencyCapacitySignalEventPublisher emergencyCapacitySignalEventPublisher,
+    IResourceRecoveredEventPublisher resourceRecoveredEventPublisher)
 {
     private readonly Dictionary<ResourceType, CapacityTier> _lastTier = [];
+
+    // §19.5: "After a Critical/Emergency threshold crossing... resolves (measured load returns
+    // below Warning)" — tracks that a resource has been in Critical/Emergency at some point since
+    // its last recovery, so a gradual Critical -> Warning -> Safe descent still publishes
+    // ResourceRecovered once Safe is reached, not only a direct Critical/Emergency -> Safe jump
+    // (CodeRabbit PR #19 finding).
+    private readonly HashSet<ResourceType> _recoveryPending = [];
     private readonly Lock _lock = new();
 
     public CapacityTier ComputeTier(ResourceType resourceType, double measuredValue)
@@ -19,19 +30,40 @@ public sealed class CapacityManager(CapacityThresholds thresholds, IResourceThre
         var boundaries = GetBoundaries(resourceType);
         var tier = Classify(measuredValue, boundaries);
 
-        // The lock protects only the _lastTier read/write (state); the event publish itself
-        // happens after the lock is released, so a slow or re-entrant subscriber can never
-        // block another thread's tier computation or deadlock against this same lock.
+        // The lock protects only the _lastTier/_recoveryPending read/write (state); the event
+        // publishes themselves happen after the lock is released, so a slow or re-entrant
+        // subscriber can never block another thread's tier computation or deadlock against this
+        // same lock.
         bool shouldPublish;
+        bool shouldPublishRecovery;
         lock (_lock)
         {
-            shouldPublish = _lastTier.TryGetValue(resourceType, out var previousTier) && previousTier != tier;
+            var hadPreviousTier = _lastTier.TryGetValue(resourceType, out var previousTier);
+            shouldPublish = hadPreviousTier && previousTier != tier;
             _lastTier[resourceType] = tier;
+
+            if (tier is CapacityTier.Critical or CapacityTier.Emergency)
+            {
+                _recoveryPending.Add(resourceType);
+            }
+
+            shouldPublishRecovery = tier == CapacityTier.Safe && _recoveryPending.Remove(resourceType);
         }
 
         if (shouldPublish)
         {
             eventPublisher.PublishResourceThresholdCrossed(resourceType, tier);
+
+            // WP-022 Implementation Plan Decision D6 — §17.4's exact trigger condition.
+            if (tier == CapacityTier.Emergency)
+            {
+                emergencyCapacitySignalEventPublisher.PublishEmergencyCapacitySignal(resourceType, measuredValue);
+            }
+        }
+
+        if (shouldPublishRecovery)
+        {
+            resourceRecoveredEventPublisher.PublishResourceRecovered(resourceType);
         }
 
         return tier;

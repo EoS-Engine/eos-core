@@ -57,6 +57,12 @@ public class CompressProtectionGateTests
         public double GetCurrentBudget(ResourceType resourceType) => 0;
 
         public CapacityTier GetCurrentTier(ResourceType resourceType) => CapacityTier.Safe;
+
+        public ModelResidencyStatus GetModelResidency(string modelId) => new(modelId, ModelResidencyState.Unloaded, null);
+
+        public void RequestBackgroundSlot(string jobId, ResourceClass resourceClass)
+        {
+        }
     }
 
     [Fact]

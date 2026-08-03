@@ -9,10 +9,15 @@ namespace EOS.Resources;
 /// consume via <c>EOS.Contracts</c>. <c>query_history()</c> is not implemented here — see
 /// AG-0003 (unrelated to this WP's scope).
 /// </summary>
-public sealed class ResourceManagementClient(ResourceMonitor resourceMonitor, CapacityManager capacityManager) : IResourceManagementClient
+public sealed class ResourceManagementClient(ResourceMonitor resourceMonitor, CapacityManager capacityManager, BackgroundTaskController backgroundTaskController) : IResourceManagementClient
 {
     public double GetCurrentBudget(ResourceType resourceType) => resourceMonitor.Sample(resourceType);
 
     public CapacityTier GetCurrentTier(ResourceType resourceType) =>
         capacityManager.ComputeTier(resourceType, resourceMonitor.Sample(resourceType));
+
+    public ModelResidencyStatus GetModelResidency(string modelId) => resourceMonitor.GetModelResidency(modelId);
+
+    public void RequestBackgroundSlot(string jobId, ResourceClass resourceClass) =>
+        backgroundTaskController.RequestBackgroundSlot(jobId, resourceClass);
 }

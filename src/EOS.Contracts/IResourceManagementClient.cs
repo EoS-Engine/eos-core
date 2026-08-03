@@ -14,4 +14,17 @@ public interface IResourceManagementClient
     double GetCurrentBudget(ResourceType resourceType);
 
     CapacityTier GetCurrentTier(ResourceType resourceType);
+
+    /// <summary>
+    /// WP-022: Resource-Management-Specification-v1.0 §21.1/§14.3 read-only residency signal.
+    /// </summary>
+    ModelResidencyStatus GetModelResidency(string modelId);
+
+    /// <summary>
+    /// WP-022: Resource-Management-Specification-v1.0 §21.1's one write-shaped call — requests a
+    /// background resource slot; the Background Task Controller (§10.6) grants or defers it
+    /// (§15.1), never altering what the job itself does. Outcome is observed via the
+    /// <c>BackgroundJobGranted</c>/<c>BackgroundJobDeferred</c> events (§20), not a return value.
+    /// </summary>
+    void RequestBackgroundSlot(string jobId, ResourceClass resourceClass);
 }
