@@ -33,6 +33,16 @@ public sealed class ResourceMonitor(int samplingIntervalSeconds)
     {
         lock (_lock)
         {
+            // §20.1: Queue Length/Background Tasks/Model Usage are observed via the Event
+            // Catalog, not OS-level sampled (Decision D6) — the elapsed-time throttle exists
+            // only to bound the cost of real OS-level reads (§18.1); an in-memory counter has
+            // no such cost, so these three dimensions always return the current live count,
+            // never a value cached from before the most recent Record* call.
+            if (IsEventDriven(resourceType))
+            {
+                return MeasureNow(resourceType);
+            }
+
             var now = DateTimeOffset.UtcNow;
             if (_cache.TryGetValue(resourceType, out var cached)
                 && (now - cached.SampledAt).TotalSeconds < samplingIntervalSeconds)
@@ -46,14 +56,15 @@ public sealed class ResourceMonitor(int samplingIntervalSeconds)
         }
     }
 
+    private static bool IsEventDriven(ResourceType resourceType) =>
+        resourceType is ResourceType.QueueLength or ResourceType.BackgroundTasks or ResourceType.ModelUsage;
+
     private double MeasureNow(ResourceType resourceType) => resourceType switch
     {
         ResourceType.Cpu => MeasureCpuUtilizationPercent(),
         ResourceType.Ram => MeasureRamUsedMegabytes(),
         ResourceType.Disk => MeasureDiskUsedMegabytes(),
         ResourceType.CacheUsage => MeasureCacheUsagePercent(),
-        // §20.1: observed via the Event Catalog, not sampled directly (Decision D6) — the
-        // real-time recorded count is returned as-is; sampling/throttling does not apply to it.
         ResourceType.QueueLength or ResourceType.BackgroundTasks => _activeTaskCount,
         ResourceType.ModelUsage => _activeInferenceCount,
         _ => throw new ArgumentOutOfRangeException(nameof(resourceType), resourceType, "Unsupported ResourceType."),

@@ -19,14 +19,19 @@ public sealed class CapacityManager(CapacityThresholds thresholds, IResourceThre
         var boundaries = GetBoundaries(resourceType);
         var tier = Classify(measuredValue, boundaries);
 
+        // The lock protects only the _lastTier read/write (state); the event publish itself
+        // happens after the lock is released, so a slow or re-entrant subscriber can never
+        // block another thread's tier computation or deadlock against this same lock.
+        bool shouldPublish;
         lock (_lock)
         {
-            if (_lastTier.TryGetValue(resourceType, out var previousTier) && previousTier != tier)
-            {
-                eventPublisher.PublishResourceThresholdCrossed(resourceType, tier);
-            }
-
+            shouldPublish = _lastTier.TryGetValue(resourceType, out var previousTier) && previousTier != tier;
             _lastTier[resourceType] = tier;
+        }
+
+        if (shouldPublish)
+        {
+            eventPublisher.PublishResourceThresholdCrossed(resourceType, tier);
         }
 
         return tier;

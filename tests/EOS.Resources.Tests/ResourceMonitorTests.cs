@@ -122,4 +122,86 @@ public class ResourceMonitorTests
 
         Assert.Equal(0.0, value);
     }
+
+    // CQ-1 regression: event-driven dimensions (Queue Length, Background Tasks, Model Usage)
+    // must reflect the latest recorded state immediately, never a value cached from before the
+    // most recent Record* call — the sampling throttle (ResourceSamplingIntervalSeconds) must
+    // never make GetCurrentBudget()/Sample() return stale data for these three dimensions, even
+    // when a very long interval is configured.
+
+    [Fact]
+    public void Sample_ObservesRecordTaskStarted_ImmediatelyWithoutWaitingForSamplingInterval()
+    {
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600);
+        Assert.Equal(0, monitor.Sample(ResourceType.QueueLength));
+        Assert.Equal(0, monitor.Sample(ResourceType.BackgroundTasks));
+
+        monitor.RecordTaskStarted(Guid.NewGuid());
+
+        Assert.Equal(1, monitor.Sample(ResourceType.QueueLength));
+        Assert.Equal(1, monitor.Sample(ResourceType.BackgroundTasks));
+    }
+
+    [Fact]
+    public void Sample_ObservesRecordTaskCompleted_ImmediatelyWithoutWaitingForSamplingInterval()
+    {
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600);
+        var taskId = Guid.NewGuid();
+        monitor.RecordTaskStarted(taskId);
+        Assert.Equal(1, monitor.Sample(ResourceType.BackgroundTasks));
+
+        monitor.RecordTaskCompleted(taskId);
+
+        Assert.Equal(0, monitor.Sample(ResourceType.BackgroundTasks));
+    }
+
+    [Fact]
+    public void Sample_ObservesRecordTaskBlocked_ImmediatelyWithoutWaitingForSamplingInterval()
+    {
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600);
+        var taskId = Guid.NewGuid();
+        monitor.RecordTaskStarted(taskId);
+        Assert.Equal(1, monitor.Sample(ResourceType.QueueLength));
+
+        monitor.RecordTaskBlocked(taskId);
+
+        Assert.Equal(0, monitor.Sample(ResourceType.QueueLength));
+    }
+
+    [Fact]
+    public void Sample_ObservesRecordInferenceRouted_ImmediatelyWithoutWaitingForSamplingInterval()
+    {
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600);
+        Assert.Equal(0, monitor.Sample(ResourceType.ModelUsage));
+
+        monitor.RecordInferenceRouted("qwen2.5-coder:7b");
+
+        Assert.Equal(1, monitor.Sample(ResourceType.ModelUsage));
+    }
+
+    [Fact]
+    public void Sample_ObservesRecordInferenceCompleted_ImmediatelyWithoutWaitingForSamplingInterval()
+    {
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 3600);
+        monitor.RecordInferenceRouted("qwen2.5-coder:7b");
+        Assert.Equal(1, monitor.Sample(ResourceType.ModelUsage));
+
+        monitor.RecordInferenceCompleted("qwen2.5-coder:7b");
+
+        Assert.Equal(0, monitor.Sample(ResourceType.ModelUsage));
+    }
+
+    [Fact]
+    public void Sample_StillThrottlesOsLevelDimensions_WhenEventDrivenDimensionsAreAlsoRecorded()
+    {
+        // Confirms the CQ-1 fix is scoped to the three event-driven dimensions only - CPU/RAM/
+        // Disk/Cache remain throttled exactly as before.
+        var monitor = new ResourceMonitor(samplingIntervalSeconds: 300);
+        var first = monitor.Sample(ResourceType.Ram);
+
+        monitor.RecordTaskStarted(Guid.NewGuid());
+        var second = monitor.Sample(ResourceType.Ram);
+
+        Assert.Equal(first, second);
+    }
 }

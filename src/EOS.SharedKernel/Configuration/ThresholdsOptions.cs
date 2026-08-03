@@ -19,8 +19,12 @@ public sealed record ThresholdsOptions
     [Range(1, 2_147_483)]
     public required int InferenceTimeoutSeconds { get; init; }
 
-    // Resource Protection ceilings (Protection-Layer-Specification-v1.0 §16). Structurally
-    // ready, stub values only — real enforcement awaits Resource Management (WP-021).
+    // Resource Protection ceilings (Protection-Layer-Specification-v1.0 §16) — Resource-
+    // Management-Specification-v1.0 §19.3's Limits concept. WP-021's ResourceManagementClient
+    // now provides the real, live-measured budget ProtectionGate logs alongside these
+    // configured ceilings; no ActionRequest carries a requested resource amount to compare
+    // against them yet (WP-013 Architecture Challenge, G1/G4), so enforcement itself remains
+    // structural only, unchanged from WP-013.
     [Range(0, 100)]
     public required int CpuCeilingPercent { get; init; }
 
