@@ -166,6 +166,37 @@ public class CapacityManagerTests
         Assert.Equal(0, recoveredPublisher.CallCount);
     }
 
+    // CodeRabbit PR #19 finding: a gradual Critical -> Warning -> Safe descent must still
+    // publish ResourceRecovered once Safe is reached, not only a direct Critical/Emergency ->
+    // Safe transition — §19.5's "after a Critical/Emergency threshold crossing... resolves"
+    // does not require the immediately preceding sample to itself be Critical/Emergency.
+    [Fact]
+    public void ComputeTier_PublishesResourceRecovered_AfterAGradualDescentThroughWarning()
+    {
+        var recoveredPublisher = new CapturingResourceRecoveredEventPublisher();
+        var manager = new CapacityManager(CreateThresholds(), new CapturingResourceThresholdCrossedEventPublisher(), new CapturingEmergencyCapacitySignalEventPublisher(), recoveredPublisher);
+        manager.ComputeTier(ResourceType.Cpu, measuredValue: 90); // Critical
+        manager.ComputeTier(ResourceType.Cpu, measuredValue: 80); // Warning (recovery still pending)
+
+        manager.ComputeTier(ResourceType.Cpu, measuredValue: 50); // Safe
+
+        Assert.Equal(1, recoveredPublisher.CallCount);
+        Assert.Equal(ResourceType.Cpu, recoveredPublisher.LastResourceType);
+    }
+
+    [Fact]
+    public void ComputeTier_DoesNotRepublishResourceRecovered_OnRepeatedSafeReadingsAfterRecovery()
+    {
+        var recoveredPublisher = new CapturingResourceRecoveredEventPublisher();
+        var manager = new CapacityManager(CreateThresholds(), new CapturingResourceThresholdCrossedEventPublisher(), new CapturingEmergencyCapacitySignalEventPublisher(), recoveredPublisher);
+        manager.ComputeTier(ResourceType.Cpu, measuredValue: 90); // Critical
+        manager.ComputeTier(ResourceType.Cpu, measuredValue: 50); // Safe -> publishes once
+
+        manager.ComputeTier(ResourceType.Cpu, measuredValue: 55); // Still Safe
+
+        Assert.Equal(1, recoveredPublisher.CallCount);
+    }
+
     private sealed class CapturingResourceThresholdCrossedEventPublisher : IResourceThresholdCrossedEventPublisher
     {
         public int CallCount { get; private set; }

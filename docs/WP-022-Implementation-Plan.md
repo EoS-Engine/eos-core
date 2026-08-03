@@ -20,7 +20,7 @@ Also excluded, disclosed during this WP's own investigation (not roadmap-named, 
 
 ## Final Architecture
 
-```
+```text
 EOS.Contracts (additive)
  ├── ResourceClass (enum)          — 5 values, §16 rank order
  ├── ModelResidencyState (enum)    — Unloaded, Loading (unreachable, disclosed), Resident, Unloading
