@@ -2,7 +2,7 @@
 
 ## Revision and Source of Truth
 
-Revision 2 (FINAL). Revises Revision 1's Decision D1 (synchronous, not async, `IResourceManagementClient`) and Decision D3 (live per-`Validate()` measurement, not a one-time startup snapshot) following a review finding that the startup-snapshot design did not satisfy the roadmap's own "real, measured values" requirement on an ongoing basis. Adds an explicit Sampling Strategy section (§18 compliance). Built exclusively from: `docs/Resource-Management-Specification-v1.0.md` §10.1/§10.1a (context only), §10.2, §10.3, §17, §18, §8 (FR-RM1–FR-RM10, cross-referenced directly from the in-scope sections), §9 (NFRs, same basis), §20 (Events — cross-referenced from FR-RM6, and by the Roadmap's own Traceability Matrix assignment); `docs/EOS-Implementation-Roadmap-v1.0.md` WP-021 row and Traceability Matrix; `docs/EOS-Specification.md` Part 1 §1.2 (dependency table rows for `EOS.Resources`, `EOS.Gates`, `EOS.Orchestrator`, `EOS.AIProvider`, `EOS.Runner`) and Part 7 §7.2 (Scheduler budget structure names, cross-referenced from §10.1a/§10.3); the approved Phase 1 and Phase 2 reports. No other document was used as evidence.
+Revision 3 (FINAL). Revises Revision 1's Decision D1 (synchronous, not async, `IResourceManagementClient`) and Decision D3 (live per-`Validate()` measurement, not a one-time startup snapshot) following a review finding that the startup-snapshot design did not satisfy the roadmap's own "real, measured values" requirement on an ongoing basis. Adds an explicit Sampling Strategy section (§18 compliance). **Revision 3** adds Decision D6, superseding an interim conclusion (reached during Slice 2 implementation) that Queue Length/Background Tasks/Model Usage were blocked by an Architecture Gap — further review found §20.1/§21.2 already specify a legal event-driven observation mechanism for exactly these three dimensions; no gap exists, no `AG-0004` was created. Built exclusively from: `docs/Resource-Management-Specification-v1.0.md` §10.1/§10.1a (context only), §10.2, §10.3, §17, §18, §8 (FR-RM1–FR-RM10, cross-referenced directly from the in-scope sections), §9 (NFRs, same basis), §20 (Events — cross-referenced from FR-RM6, and by the Roadmap's own Traceability Matrix assignment); `docs/EOS-Implementation-Roadmap-v1.0.md` WP-021 row and Traceability Matrix; `docs/EOS-Specification.md` Part 1 §1.2 (dependency table rows for `EOS.Resources`, `EOS.Gates`, `EOS.Orchestrator`, `EOS.AIProvider`, `EOS.Runner`) and Part 7 §7.2 (Scheduler budget structure names, cross-referenced from §10.1a/§10.3); the approved Phase 1 and Phase 2 reports. No other document was used as evidence.
 
 ## Current Repository Baseline
 
@@ -33,8 +33,11 @@ Revision 2 (FINAL). Revises Revision 1's Decision D1 (synchronous, not async, `I
 
 ```
 EOS.Resources (new real code)
- ├── ResourceMonitor        — §18: samples 7 dimensions (CPU, RAM, Disk, Model Usage,
- │                             Queue Length, Background Tasks, Cache Usage)
+ ├── ResourceMonitor        — §18: samples 4 OS-level dimensions directly (CPU, RAM, Disk,
+ │                             Cache Usage) and observes 3 event-driven dimensions (Queue
+ │                             Length, Background Tasks, Model Usage) via public recording
+ │                             methods Program.cs forwards events into (Decision D6) — no
+ │                             new EOS.Contracts interface needed for this inbound direction
  ├── CapacityManager        — §17: computes Safe/Warning/Critical/Emergency per dimension
  │                             from ResourceMonitor's sample + Thresholds.json boundaries
  └── ResourceManagementClient (implements IResourceManagementClient, EOS.Contracts)
@@ -52,8 +55,11 @@ EOS.Resources (Composition Root Adapter interface, ADR-015-001 pattern)
                                                  IContextAssemblyEventPublisher (WP-015) precedent
 
 EOS.Runner/Program.cs (composition root, unchanged dependency posture — already "Everything")
- ├── constructs the real ResourceManagementClient
- └── constructs the EventMediator-backed IResourceThresholdCrossedEventPublisher adapter
+ ├── constructs the real ResourceManagementClient/ResourceMonitor
+ ├── constructs the EventMediator-backed IResourceThresholdCrossedEventPublisher adapter
+ └── subscribes to TaskStarted/TaskCompleted/TaskBlocked/InferenceRouted/InferenceCompleted
+       (structurally ready — no real producer yet) and forwards each into ResourceMonitor's
+       public recording methods, mirroring AutomaticConsolidationTriggerHandlers (Decision D6)
 
 EOS.Gates (modified, no new project dependency — IResourceManagementClient lives in
             EOS.Contracts, which EOS.Gates already depends on)
@@ -122,6 +128,20 @@ Each decision below follows the Repository Evidence / Specification Evidence / S
 **Decision:** Seven new triplets (Warning/Critical/Emergency boundary per dimension; Safe is implicitly "below Warning," consistent with §17.1's "baseline range... may draw allocation freely" framing rather than a fourth explicit number) — 21 new fields total, following the existing `ThresholdsOptions` naming convention (e.g., `Cpu` + tier name + unit suffix, mirroring `CpuCeilingPercent`'s own pattern). Exact field names are finalized at implementation time (Slice 1), not enumerated here, per "do not generate production code."
 
 **KISS/YAGNI:** No fields added for `EmergencyCapacitySignal` or any WP-022-owned concept.
+
+---
+
+### Decision D6 — Queue Length / Background Tasks / Model Usage observation mechanism
+
+**Why this was reclassified from an Architecture Gap:** These three dimensions have no *direct* dependency path (`EOS.Resources`'s row is "EOS.Contracts, EOS.SDK" only — no `EOS.Orchestrator`, no `EOS.AIProvider`). Direct measurement was correctly identified as illegal. Further review found the frozen documents already specify a legal, different mechanism for exactly this case.
+
+**Specification Evidence:** §20.1 (Consumed Events), verbatim: "`TaskStarted`/`TaskCompleted`/`TaskBlocked` (Constitution Part 3, unchanged) — inform the Resource Monitor's Queue Length/Background Task observation (§18.2), read-only." and "`InferenceRouted`/`InferenceCompleted` (AI-Provider-Layer-Specification-v1.0 §19) — inform Model Residency's usage tracking (§14.3), read-only." §21.2, verbatim: "Where Resource Management needs to *surface* a signal... it does so via the standard Event Catalog (§20), not a direct interface call, keeping the dependency direction one-way." Constitution Part 3 §3.2: "**Producer/consumer decoupling**: consumers never assume a producer's internal implementation — only the versioned payload schema."
+
+**Repository Evidence:** `Program.cs`'s `AutomaticConsolidationTriggerHandlers.RegisterSubscriptions(eventMediator, knowledgeClient)` subscribes to events via `EventMediator` (which only `EOS.Runner` references) and forwards decoded payloads into `IKnowledgeClient` — `EOS.Knowledge` itself never references `EOS.Orchestrator`/`EventMediator`. Repository fact: no `Scheduler`/Priority Queue implementation exists yet in `EOS.Orchestrator` (only `EventMediator.cs`), and `InferenceRouted`/`InferenceCompleted` in `AIProviderManager.cs` today are log-message strings, not real published `EventEnvelope`-based events — i.e., these events are specification-named but have no real producer yet, the same "structurally ready, awaiting a real producer" state already established for `ResourceCeilings` (WP-013) and other prior WPs' stubs.
+
+**Decision:** `ResourceMonitor` (in `EOS.Resources`) exposes plain public recording methods (`RecordTaskStarted`, `RecordTaskCompleted`, `RecordTaskBlocked`, `RecordInferenceRouted`, `RecordInferenceCompleted`) — no new `EOS.Contracts` interface is needed for this inbound direction, since `Program.cs` already holds a direct reference to the concrete `ResourceMonitor` instance it constructs (unlike `IKnowledgeClient`, which has multiple consumers across projects, `ResourceMonitor`'s only forwarder is `Program.cs` itself — YAGNI). `ResourceMonitor` maintains an internal `ActiveTaskCount` (incremented on `RecordTaskStarted`, decremented on `RecordTaskCompleted`/`RecordTaskBlocked`) as the measured value for both Queue Length and Background Tasks (§20.1's own text names the same three events as informing both dimensions jointly), and an `ActiveInferenceCount` (incremented on `RecordInferenceRouted`, decremented on `RecordInferenceCompleted`) as the measured value for Model Usage. `Program.cs` subscribes to `EventMediator` for these five event types (minimal payload records, `internal sealed record`, matching Constitution Part 3's named fields exactly — `task_id` for Task events, a model identifier for Inference events) and forwards them to `ResourceMonitor`, mirroring `AutomaticConsolidationTriggerHandlers`'s exact pattern. Since no real producer publishes these events yet anywhere in this repository, the subscriptions are structurally ready but will not fire until a future WP (Scheduler, real AI Provider Event Catalog wiring) implements the producer side — until then, `GetCurrentBudget(QueueLength/BackgroundTasks/ModelUsage)` honestly returns `0` (the true count of observed-but-unreported activity), not a fabricated non-zero value.
+
+**KISS/YAGNI:** No new `EOS.Contracts` interface (single in-process forwarder); no new project dependency; reuses the exact `EventMediator.Subscribe<T>`/`Program.cs`-forwarding pattern already established by WP-015.
 
 ---
 
