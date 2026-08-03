@@ -19,8 +19,12 @@ public sealed record ThresholdsOptions
     [Range(1, 2_147_483)]
     public required int InferenceTimeoutSeconds { get; init; }
 
-    // Resource Protection ceilings (Protection-Layer-Specification-v1.0 §16). Structurally
-    // ready, stub values only — real enforcement awaits Resource Management (WP-021).
+    // Resource Protection ceilings (Protection-Layer-Specification-v1.0 §16) — Resource-
+    // Management-Specification-v1.0 §19.3's Limits concept. WP-021's ResourceManagementClient
+    // now provides the real, live-measured budget ProtectionGate logs alongside these
+    // configured ceilings; no ActionRequest carries a requested resource amount to compare
+    // against them yet (WP-013 Architecture Challenge, G1/G4), so enforcement itself remains
+    // structural only, unchanged from WP-013.
     [Range(0, 100)]
     public required int CpuCeilingPercent { get; init; }
 
@@ -82,4 +86,79 @@ public sealed record ThresholdsOptions
     // still returned but flagged via LowConfidenceDecisionFlagged.
     [Range(0.0, 1.0)]
     public required double ReasoningLowConfidenceFloor { get; init; }
+
+    // Resource Management Capacity Planning (Resource-Management-Specification-v1.0 §17.1-§17.4):
+    // Safe/Warning/Critical/Emergency tier boundaries, one triplet per §18.2 monitored dimension
+    // — distinct from the existing *CeilingPercent/*CeilingMegabytes/*CeilingTokens/*CeilingCount
+    // fields above, which are §19.3 Limits (Protection's per-action ceiling), not §17 Capacity
+    // Planning tiers. §17.5: "All four tiers, per resource type, are defined in Thresholds.json."
+    [Range(0, 100)]
+    public required int CpuWarningThresholdPercent { get; init; }
+
+    [Range(0, 100)]
+    public required int CpuCriticalThresholdPercent { get; init; }
+
+    [Range(0, 100)]
+    public required int CpuEmergencyThresholdPercent { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int RamWarningThresholdMegabytes { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int RamCriticalThresholdMegabytes { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int RamEmergencyThresholdMegabytes { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int DiskWarningThresholdMegabytes { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int DiskCriticalThresholdMegabytes { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int DiskEmergencyThresholdMegabytes { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int ModelUsageWarningThresholdTokens { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int ModelUsageCriticalThresholdTokens { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int ModelUsageEmergencyThresholdTokens { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int QueueLengthWarningThresholdCount { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int QueueLengthCriticalThresholdCount { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int QueueLengthEmergencyThresholdCount { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int BackgroundTasksWarningThresholdCount { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int BackgroundTasksCriticalThresholdCount { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int BackgroundTasksEmergencyThresholdCount { get; init; }
+
+    [Range(0, 100)]
+    public required int CacheUsageWarningThresholdPercent { get; init; }
+
+    [Range(0, 100)]
+    public required int CacheUsageCriticalThresholdPercent { get; init; }
+
+    [Range(0, 100)]
+    public required int CacheUsageEmergencyThresholdPercent { get; init; }
+
+    // Resource Monitor Sampling Model (Resource-Management-Specification-v1.0 §18.1): "sampled
+    // at a bounded cadence (configurable, Thresholds.json), never continuously instrumented" —
+    // the elapsed-time throttle bound between real OS-level measurements per resource type
+    // (WP-021 Implementation Plan, Sampling Strategy).
+    [Range(1, int.MaxValue)]
+    public required int ResourceSamplingIntervalSeconds { get; init; }
 }

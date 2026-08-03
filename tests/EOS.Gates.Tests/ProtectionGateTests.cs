@@ -32,7 +32,15 @@ public class ProtectionGateTests
             new ApprovalEngine(),
             new EmergencyShutdownState(),
             DefaultResourceCeilings,
+            new StubResourceManagementClient(),
             logger ?? new RecordingLogger());
+    }
+
+    private sealed class StubResourceManagementClient : IResourceManagementClient
+    {
+        public double GetCurrentBudget(ResourceType resourceType) => 0;
+
+        public CapacityTier GetCurrentTier(ResourceType resourceType) => CapacityTier.Safe;
     }
 
     [Theory]
@@ -76,6 +84,37 @@ public class ProtectionGateTests
     }
 
     [Fact]
+    public void Validate_LogsTheMeasuredCpuBudget_ForHighTierAction()
+    {
+        var logger = new RecordingLogger();
+        var resourceManagementClient = new TrackingResourceManagementClient(cpuBudget: 42.5);
+        var gate = new ProtectionGate(
+            new PolicyEngine([], [], [], []), new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
+            new EmergencyShutdownState(), DefaultResourceCeilings,
+            resourceManagementClient, logger);
+        var request = CreateRequest(riskScore: 85);
+
+        gate.Validate(request);
+
+        Assert.Contains(ResourceType.Cpu, resourceManagementClient.QueriedResourceTypes);
+        var entry = Assert.Single(logger.Entries, e => e.Message.Contains("Protection resource ceiling check"));
+        Assert.Contains("MeasuredCpuBudget=42.5", entry.Message);
+    }
+
+    private sealed class TrackingResourceManagementClient(double cpuBudget) : IResourceManagementClient
+    {
+        public List<ResourceType> QueriedResourceTypes { get; } = [];
+
+        public double GetCurrentBudget(ResourceType resourceType)
+        {
+            QueriedResourceTypes.Add(resourceType);
+            return resourceType == ResourceType.Cpu ? cpuBudget : 0;
+        }
+
+        public CapacityTier GetCurrentTier(ResourceType resourceType) => CapacityTier.Safe;
+    }
+
+    [Fact]
     public void Validate_DefersForApproval_WhenHighTierActionTypeRequiresHumanSignOff()
     {
         var gate = CreateGate();
@@ -96,7 +135,7 @@ public class ProtectionGateTests
             runtimePolicies: []);
         var gate = new ProtectionGate(
             policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
-            new EmergencyShutdownState(), DefaultResourceCeilings, new RecordingLogger());
+            new EmergencyShutdownState(), DefaultResourceCeilings, new StubResourceManagementClient(), new RecordingLogger());
 
         var result = gate.Validate(CreateRequest(riskScore: 50));
 
@@ -115,7 +154,7 @@ public class ProtectionGateTests
             runtimePolicies: []);
         var gate = new ProtectionGate(
             policyEngine, new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
-            new EmergencyShutdownState(), DefaultResourceCeilings, new RecordingLogger());
+            new EmergencyShutdownState(), DefaultResourceCeilings, new StubResourceManagementClient(), new RecordingLogger());
         var request = CreateRequest(riskScore: 50);
 
         gate.Validate(request);

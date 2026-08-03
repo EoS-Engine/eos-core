@@ -149,6 +149,30 @@ public sealed class BootstrapRunner(ILogger<BootstrapRunner> logger)
                     "ThresholdsOptions.ResourceCriticalPercent must be greater than ResourceWarningPercent.");
             }
 
+            // Resource-Management-Specification-v1.0 §17.5: each resource type's four tiers
+            // (Safe implicitly below Warning) must be strictly ordered, or Capacity Manager's
+            // classification silently misclassifies measured values instead of failing closed.
+            var capacityTierTriples = new (string ResourceType, int Warning, int Critical, int Emergency)[]
+            {
+                ("Cpu", thresholdsOptions.CpuWarningThresholdPercent, thresholdsOptions.CpuCriticalThresholdPercent, thresholdsOptions.CpuEmergencyThresholdPercent),
+                ("Ram", thresholdsOptions.RamWarningThresholdMegabytes, thresholdsOptions.RamCriticalThresholdMegabytes, thresholdsOptions.RamEmergencyThresholdMegabytes),
+                ("Disk", thresholdsOptions.DiskWarningThresholdMegabytes, thresholdsOptions.DiskCriticalThresholdMegabytes, thresholdsOptions.DiskEmergencyThresholdMegabytes),
+                ("ModelUsage", thresholdsOptions.ModelUsageWarningThresholdTokens, thresholdsOptions.ModelUsageCriticalThresholdTokens, thresholdsOptions.ModelUsageEmergencyThresholdTokens),
+                ("QueueLength", thresholdsOptions.QueueLengthWarningThresholdCount, thresholdsOptions.QueueLengthCriticalThresholdCount, thresholdsOptions.QueueLengthEmergencyThresholdCount),
+                ("BackgroundTasks", thresholdsOptions.BackgroundTasksWarningThresholdCount, thresholdsOptions.BackgroundTasksCriticalThresholdCount, thresholdsOptions.BackgroundTasksEmergencyThresholdCount),
+                ("CacheUsage", thresholdsOptions.CacheUsageWarningThresholdPercent, thresholdsOptions.CacheUsageCriticalThresholdPercent, thresholdsOptions.CacheUsageEmergencyThresholdPercent),
+            };
+
+            foreach (var (resourceType, warning, critical, emergency) in capacityTierTriples)
+            {
+                if (warning >= critical || critical >= emergency)
+                {
+                    throw new ConfigurationValidationException(
+                        $"ThresholdsOptions.{resourceType} tier boundaries must satisfy Warning < Critical < Emergency " +
+                        $"(got Warning={warning}, Critical={critical}, Emergency={emergency}).");
+                }
+            }
+
             if (storeHealthResults is null || storeHealthResults.Any(r => !r.Healthy))
             {
                 throw new ConfigurationValidationException("Not all data stores reported healthy during Start Infrastructure.");

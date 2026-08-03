@@ -48,7 +48,15 @@ public class CompressProtectionGateTests
             new ApprovalEngine(),
             emergencyShutdownState ?? new EmergencyShutdownState(),
             DefaultResourceCeilings,
+            new StubResourceManagementClient(),
             NullLogger<ProtectionGate>.Instance);
+    }
+
+    private sealed class StubResourceManagementClient : IResourceManagementClient
+    {
+        public double GetCurrentBudget(ResourceType resourceType) => 0;
+
+        public CapacityTier GetCurrentTier(ResourceType resourceType) => CapacityTier.Safe;
     }
 
     [Fact]
