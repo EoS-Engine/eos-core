@@ -24,6 +24,17 @@ public sealed class GoalManager(
     /// </summary>
     public async Task<Goal> CreateGoalAsync(Goal submittedGoal, CancellationToken cancellationToken)
     {
+        // §11.2's Goal Hierarchy is only ever populated through this one method, and no method in
+        // this codebase ever changes a persisted Goal's ParentGoalId afterward — so a self-parent
+        // link here is the only cycle CancelGoalAndDescendantsAsync's recursive traversal could
+        // ever encounter (an indirect cycle would require retroactively repointing an existing
+        // Goal's parent, which nothing does). Left unchecked, a self-parented Goal would make that
+        // traversal recurse indefinitely on itself — an unrecoverable StackOverflowException.
+        if (submittedGoal.ParentGoalId == submittedGoal.GoalId)
+        {
+            throw new ArgumentException("A Goal cannot be its own parent.", nameof(submittedGoal));
+        }
+
         var goal = submittedGoal with { State = GoalLifecycleState.Proposed, PlanId = null };
 
         await goalStore.UpsertAsync(goal, cancellationToken);
@@ -63,6 +74,13 @@ public sealed class GoalManager(
     /// </summary>
     public async Task CancelGoalAsync(Guid goalId, string reason, CancellationToken cancellationToken)
     {
+        // Constitution Part 6 §6.2's "Any → Cancelled" transition requires "Cancellation
+        // justification" — §11.6 mirrors this rule verbatim at the Goal level.
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new ArgumentException("Cancellation reason is required.", nameof(reason));
+        }
+
         var goal = await goalStore.GetByIdAsync(goalId, cancellationToken)
             ?? throw new InvalidOperationException($"Goal '{goalId}' does not exist.");
 

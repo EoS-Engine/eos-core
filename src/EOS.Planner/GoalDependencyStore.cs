@@ -31,10 +31,12 @@ public sealed class GoalDependencyStore(string connectionString)
         {
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        catch (SqlException ex) when (ex.Number is 2705 or 1913 or 2714)
+        catch (SqlException ex) when (ex.Number is 1913 or 2714)
         {
-            // Benign race on the non-atomic IF NOT EXISTS guard above (identical class of issue
-            // already found and fixed for ArchivedContentStore, WP-016).
+            // Benign race on the non-atomic IF NOT EXISTS guard above (matching
+            // ArchivedContentStore's exact filter, WP-016). 2705 ("duplicate column name") is
+            // deliberately excluded — that error indicates a malformed CREATE TABLE statement,
+            // not a concurrency artifact, and must not be silently swallowed.
         }
     }
 
@@ -51,7 +53,18 @@ public sealed class GoalDependencyStore(string connectionString)
         command.Parameters.AddWithValue("@GoalId", goalId);
         command.Parameters.AddWithValue("@DependsOnGoalId", dependsOnGoalId);
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        try
+        {
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException ex) when (ex.Number == 2627)
+        {
+            // Benign race on the non-atomic IF NOT EXISTS guard above, matching the same
+            // idempotent-race-handling convention used for table creation in this file's own
+            // EnsureTableExistsAsync: two concurrent callers both pass the existence check, one
+            // loses the race on the (GoalId, DependsOnGoalId) primary key, but the row it wanted
+            // now exists anyway.
+        }
     }
 
     public async Task<IReadOnlyList<Guid>> GetDependenciesAsync(Guid goalId, CancellationToken cancellationToken)

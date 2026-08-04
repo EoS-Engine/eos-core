@@ -36,10 +36,12 @@ public sealed class PlanStore(string connectionString)
         {
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        catch (SqlException ex) when (ex.Number is 2705 or 1913 or 2714)
+        catch (SqlException ex) when (ex.Number is 1913 or 2714)
         {
-            // Benign race on the non-atomic IF NOT EXISTS guard above (identical class of issue
-            // already found and fixed for ArchivedContentStore, WP-016).
+            // Benign race on the non-atomic IF NOT EXISTS guard above (matching
+            // ArchivedContentStore's exact filter, WP-016). 2705 ("duplicate column name") is
+            // deliberately excluded — that error indicates a malformed CREATE TABLE statement,
+            // not a concurrency artifact, and must not be silently swallowed.
         }
     }
 

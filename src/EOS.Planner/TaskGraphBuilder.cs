@@ -52,6 +52,11 @@ public sealed class TaskGraphBuilder(IKnowledgeClient knowledgeClient, IReasonin
             RequestingRole: "EOS.Planner",
             ReasoningType: ReasoningType.GoalOrientedReasoning);
 
+        // ReasoningEngine.ReasonAsync (the only production IReasoningEngineClient implementation)
+        // cannot return an empty array on success: an empty hypothesis set makes its own decision
+        // construction throw before returning, rather than yielding `decisions = []`. decisions[0]
+        // is therefore always either a valid element or unreachable because ReasonAsync itself
+        // already threw.
         var decisions = await reasoningEngineClient.ReasonAsync(request, cancellationToken);
         var decision = decisions[0];
 

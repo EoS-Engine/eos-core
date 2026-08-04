@@ -94,4 +94,40 @@ public class GoalManagerTests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => manager.CancelGoalAsync(Guid.NewGuid(), "reason", CancellationToken.None));
     }
+
+    // CodeRabbit PR #20 round 1: a self-parented Goal would make
+    // CancelGoalAndDescendantsAsync's recursive traversal recurse on itself indefinitely.
+    [Fact]
+    public async Task CreateGoalAsync_ThrowsArgumentException_WhenTheGoalIsItsOwnParent()
+    {
+        var store = await CreateStoreAsync();
+        var manager = CreateManager(store);
+        var goalId = Guid.NewGuid();
+        var submitted = new Goal(
+            GoalId: goalId,
+            Statement: "Self-parented goal",
+            ParentGoalId: goalId,
+            DomainTags: [],
+            SubmittedByActor: "Product Owner",
+            State: GoalLifecycleState.Proposed,
+            PlanId: null);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => manager.CreateGoalAsync(submitted, CancellationToken.None));
+    }
+
+    // CodeRabbit PR #20 round 1: Constitution Part 6 §6.2's "Any → Cancelled" transition requires
+    // a cancellation justification; §11.6 mirrors this rule at the Goal level.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CancelGoalAsync_ThrowsArgumentException_WhenReasonIsBlank(string reason)
+    {
+        var store = await CreateStoreAsync();
+        var manager = CreateManager(store);
+        var goal = await manager.CreateGoalAsync(SubmittedGoal("Goal to cancel"), CancellationToken.None);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => manager.CancelGoalAsync(goal.GoalId, reason, CancellationToken.None));
+    }
 }
