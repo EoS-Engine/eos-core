@@ -5,6 +5,7 @@ using EOS.Contracts;
 using EOS.Knowledge;
 using EOS.KnowledgeGraph;
 using EOS.Orchestrator;
+using EOS.Planner;
 using EOS.Reasoning;
 using EOS.Resources;
 using EOS.Runner.Bootstrap;
@@ -254,6 +255,35 @@ try
     var memoryExpirationPolicy = new MemoryExpirationPolicy(
         thresholdsOptions.ShortTermMemoryExpirationSeconds, thresholdsOptions.SessionMemoryIdleTimeoutSeconds);
     _ = memoryExpirationPolicy;
+
+    // WP-023: Planning & Execution Engine — Goal Management & Task Graph Builder
+    // (Planning-Execution-Engine-Specification-v1.0 §10.1a/§10.2/§10.3/§10.4/§10.5).
+    var goalStore = new GoalStore(connectionOptions.SqlServerConnectionString);
+    await goalStore.EnsureTableExistsAsync(CancellationToken.None);
+    var planStore = new PlanStore(connectionOptions.SqlServerConnectionString);
+    await planStore.EnsureTableExistsAsync(CancellationToken.None);
+    var goalDependencyStore = new GoalDependencyStore(connectionOptions.SqlServerConnectionString);
+    await goalDependencyStore.EnsureTableExistsAsync(CancellationToken.None);
+
+    var goalManager = new GoalManager(
+        goalStore,
+        new EventMediatorGoalCreatedEventPublisher(eventMediator),
+        new EventMediatorGoalCancelledEventPublisher(eventMediator));
+    var goalValidator = new GoalValidator(protectionGate, new EventMediatorGoalValidatedEventPublisher(eventMediator));
+    var taskGraphBuilder = new TaskGraphBuilder(knowledgeClient, reasoningEngine);
+    var dependencyManager = new DependencyManager(goalDependencyStore, goalStore);
+    var priorityManager = new PriorityManager();
+    var planningEngine = new PlanningEngine(
+        goalManager,
+        goalValidator,
+        taskGraphBuilder,
+        dependencyManager,
+        priorityManager,
+        planStore,
+        new EventMediatorTaskCreatedEventPublisher(eventMediator),
+        new EventMediatorPlannerGeneratedEventPublisher(eventMediator));
+    IPlanningClient planningClient = planningEngine;
+    _ = planningClient;
 
     if (args is ["compress"])
     {
@@ -649,6 +679,79 @@ internal sealed class EventMediatorMemoryCompressedEventPublisher(EventMediator 
             version: "v1",
             producer: "EOS.Knowledge",
             payload: new MemoryCompressedPayload(entryId, originalSize, summarySize)));
+    }
+}
+
+// WP-023: Planning-Execution-Engine-Specification-v1.0 §20's new/reused events (all producers
+// already named by §20's own table; adapters follow the exact Composition Root Adapter Pattern
+// (ADR-015-001) established above for the rest of this file).
+internal sealed record GoalCreatedPayload(Guid GoalId, Guid? ParentGoalId, string Statement);
+
+internal sealed class EventMediatorGoalCreatedEventPublisher(EventMediator eventMediator) : IGoalCreatedEventPublisher
+{
+    public void PublishGoalCreated(Guid goalId, Guid? parentGoalId, string statement)
+    {
+        eventMediator.Publish(EventEnvelope<GoalCreatedPayload>.Create(
+            eventType: "GoalCreated",
+            version: "v1",
+            producer: "EOS.Planner",
+            payload: new GoalCreatedPayload(goalId, parentGoalId, statement)));
+    }
+}
+
+internal sealed record GoalValidatedPayload(Guid GoalId, bool FeasibilityResult);
+
+internal sealed class EventMediatorGoalValidatedEventPublisher(EventMediator eventMediator) : IGoalValidatedEventPublisher
+{
+    public void PublishGoalValidated(Guid goalId, bool feasibilityResult)
+    {
+        eventMediator.Publish(EventEnvelope<GoalValidatedPayload>.Create(
+            eventType: "GoalValidated",
+            version: "v1",
+            producer: "EOS.Planner",
+            payload: new GoalValidatedPayload(goalId, feasibilityResult)));
+    }
+}
+
+internal sealed record GoalCancelledPayload(Guid GoalId, string Reason);
+
+internal sealed class EventMediatorGoalCancelledEventPublisher(EventMediator eventMediator) : IGoalCancelledEventPublisher
+{
+    public void PublishGoalCancelled(Guid goalId, string reason)
+    {
+        eventMediator.Publish(EventEnvelope<GoalCancelledPayload>.Create(
+            eventType: "GoalCancelled",
+            version: "v1",
+            producer: "EOS.Planner",
+            payload: new GoalCancelledPayload(goalId, reason)));
+    }
+}
+
+internal sealed record TaskCreatedPayload(Guid TaskId, string[] CompetenciesRequired, int Priority);
+
+internal sealed class EventMediatorTaskCreatedEventPublisher(EventMediator eventMediator) : ITaskCreatedEventPublisher
+{
+    public void PublishTaskCreated(Guid taskId, string[] competenciesRequired, int priority)
+    {
+        eventMediator.Publish(EventEnvelope<TaskCreatedPayload>.Create(
+            eventType: "TaskCreated",
+            version: "v1",
+            producer: "EOS.Planner",
+            payload: new TaskCreatedPayload(taskId, competenciesRequired, priority)));
+    }
+}
+
+internal sealed record PlannerGeneratedPayload(Guid PlanId, Guid TaskGraphRef);
+
+internal sealed class EventMediatorPlannerGeneratedEventPublisher(EventMediator eventMediator) : IPlannerGeneratedEventPublisher
+{
+    public void PublishPlannerGenerated(Guid planId, Guid taskGraphRef)
+    {
+        eventMediator.Publish(EventEnvelope<PlannerGeneratedPayload>.Create(
+            eventType: "PlannerGenerated",
+            version: "v1",
+            producer: "EOS.Planner",
+            payload: new PlannerGeneratedPayload(planId, taskGraphRef)));
     }
 }
 

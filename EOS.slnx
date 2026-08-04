@@ -40,6 +40,7 @@
     <Project Path="tests/EOS.Infrastructure.Tests/EOS.Infrastructure.Tests.csproj" />
     <Project Path="tests/EOS.Knowledge.Tests/EOS.Knowledge.Tests.csproj" />
     <Project Path="tests/EOS.Orchestrator.Tests/EOS.Orchestrator.Tests.csproj" />
+    <Project Path="tests/EOS.Planner.Tests/EOS.Planner.Tests.csproj" />
     <Project Path="tests/EOS.Reasoning.Tests/EOS.Reasoning.Tests.csproj" />
     <Project Path="tests/EOS.Resources.Tests/EOS.Resources.Tests.csproj" />
     <Project Path="tests/EOS.Runner.Tests/EOS.Runner.Tests.csproj" />
