@@ -90,6 +90,16 @@ public class PlanningEngineIntegrationTests
         Assert.Contains(persistedPlan.Tasks, task => task.Description == "Verify the log output");
         Assert.Equal(plan.EstimatedResourceCost, persistedPlan.EstimatedResourceCost);
         Assert.Equal(plan.RiskAdjustedConfidenceScore, persistedPlan.RiskAdjustedConfidenceScore);
+
+        // CodeRabbit PR #20 round 2: assert the JSON round-trip through PlanStore preserves each
+        // task's DependsOnTaskIds/CompetencyRequirements, not just its Description — a
+        // serialization regression could silently drop DAG edges while the checks above still pass.
+        foreach (var submittedTask in plan.Tasks)
+        {
+            var persistedTask = Assert.Single(persistedPlan.Tasks, task => task.TaskId == submittedTask.TaskId);
+            Assert.Equal(submittedTask.DependsOnTaskIds, persistedTask.DependsOnTaskIds);
+            Assert.Equal(submittedTask.CompetencyRequirements, persistedTask.CompetencyRequirements);
+        }
     }
 
     // CodeRabbit PR #20 round 1: TaskCreated must be published only after the Goal has actually
