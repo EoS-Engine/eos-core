@@ -58,5 +58,7 @@
   "modelSlotQuotaLearningActivitiesCount": 1,
   "quotaStarvationDenialCountThreshold": 3,
   "modelIdleResidencyTimeoutSeconds": 900,
-  "quotaWindowSeconds": 30
+  "quotaWindowSeconds": 30,
+  "schedulerConcurrencyCeilingCount": 4,
+  "schedulerDailyCapacityCount": 200
 }
