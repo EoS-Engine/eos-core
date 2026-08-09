@@ -285,6 +285,27 @@ try
     IPlanningClient planningClient = planningEngine;
     _ = planningClient;
 
+    // WP-024: Scheduler & Execution Coordinator (Planning-Execution-Engine-Specification-v1.0
+    // §10.6/§10.7/§14, Constitution Part 6/Part 7 — Part 6's Task entity, first materialized
+    // here as DispatchedTask).
+    var dispatchedTaskStore = new DispatchedTaskStore(connectionOptions.SqlServerConnectionString);
+    await dispatchedTaskStore.EnsureTableExistsAsync(CancellationToken.None);
+
+    var scheduler = new Scheduler(
+        dispatchedTaskStore,
+        new PlanStorePlanQueryClient(planStore),
+        resourceManagementClient,
+        thresholdsOptions.SchedulerConcurrencyCeilingCount,
+        thresholdsOptions.SchedulerDailyCapacityCount);
+    eventMediator.Subscribe<TaskCreatedPayload>(
+        envelope => scheduler.OnTaskCreated(envelope.Payload.TaskId, envelope.Payload.Priority));
+    eventMediator.Subscribe<PlannerGeneratedPayload>(
+        envelope => scheduler.OnPlannerGeneratedAsync(envelope.Payload.PlanId, CancellationToken.None).GetAwaiter().GetResult());
+
+    var executionCoordinator = new ExecutionCoordinator(
+        scheduler, dispatchedTaskStore, protectionGate, new EventMediatorTaskStartedEventPublisher(eventMediator));
+    _ = executionCoordinator;
+
     if (args is ["compress"])
     {
         var compressionLogger = host.Services.GetRequiredService<ILogger<CompressionSweep>>();
@@ -545,8 +566,10 @@ internal sealed class EventMediatorResourceRecoveredEventPublisher(EventMediator
 // §20.1 Consumed Events (WP-021 Implementation Plan Decision D6): Constitution Part 3's
 // TaskStarted/TaskCompleted/TaskBlocked payload fields (task_id, actor_role/started_at,
 // evidence_refs[], blocking_gate/reason) — only task_id is needed by ResourceMonitor's
-// counting logic, so only that field is modeled here. No real producer (Scheduler) exists yet
-// anywhere in this repository — these subscriptions are structurally ready, not yet exercised.
+// counting logic, so only that field is modeled here. WP-024's ExecutionCoordinator is
+// TaskStarted's first real producer (see EventMediatorTaskStartedEventPublisher below);
+// TaskCompleted/TaskBlocked have no real producer yet — Retry/Rollback/Progress Tracking are
+// WP-025 — these two subscriptions remain structurally ready, not yet exercised.
 internal sealed record TaskStartedPayload(Guid TaskId);
 
 internal sealed record TaskCompletedPayload(Guid TaskId);
@@ -752,6 +775,31 @@ internal sealed class EventMediatorPlannerGeneratedEventPublisher(EventMediator 
             version: "v1",
             producer: "EOS.Planner",
             payload: new PlannerGeneratedPayload(planId, taskGraphRef)));
+    }
+}
+
+// WP-024: Composition Root Adapter Pattern (ADR-015-001) — EOS.Orchestrator may not reference
+// EOS.Planner directly (Constitution Part 1 §1.2), so it declares IPlanQueryClient for the one
+// read Scheduler needs; this adapter bridges it to EOS.Planner's own already-built
+// PlanStore.GetByIdAsync — no new persistence, no duplicate store (ADR-PE002/FR-PE10).
+internal sealed class PlanStorePlanQueryClient(PlanStore planStore) : IPlanQueryClient
+{
+    public Task<Plan?> GetByIdAsync(Guid planId, CancellationToken cancellationToken = default) =>
+        planStore.GetByIdAsync(planId, cancellationToken);
+}
+
+// WP-024: TaskStarted's first real producer — reuses the exact pre-existing TaskStartedPayload
+// record above (§20: "Existing events... reused verbatim, never redefined"), which WP-021/022's
+// ResourceMonitor already subscribes to.
+internal sealed class EventMediatorTaskStartedEventPublisher(EventMediator eventMediator) : ITaskStartedEventPublisher
+{
+    public void PublishTaskStarted(Guid taskId)
+    {
+        eventMediator.Publish(EventEnvelope<TaskStartedPayload>.Create(
+            eventType: "TaskStarted",
+            version: "v1",
+            producer: "EOS.Orchestrator",
+            payload: new TaskStartedPayload(taskId)));
     }
 }
 

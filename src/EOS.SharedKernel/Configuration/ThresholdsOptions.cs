@@ -232,4 +232,15 @@ public sealed record ThresholdsOptions
     // Recovery Plan Slice R4/Finding F6.
     [Range(1, int.MaxValue)]
     public required int QuotaWindowSeconds { get; init; }
+
+    // Constitution Part 7 §7.2's Scheduler structures this codebase had no config source for
+    // until WP-024: Concurrency ("Max simultaneous Running tasks per role/domain") and Daily
+    // Capacity ("Aggregate task-throughput ceiling per day"). No per-role/domain partitioning
+    // data exists on DispatchedTask yet, so Concurrency is enforced as one global ceiling — a
+    // disclosed simplification, not a fabricated per-role model.
+    [Range(1, int.MaxValue)]
+    public required int SchedulerConcurrencyCeilingCount { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int SchedulerDailyCapacityCount { get; init; }
 }
