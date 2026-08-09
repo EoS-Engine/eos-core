@@ -371,6 +371,84 @@ public class SchedulerTests
         Assert.Equal(task.TaskId, selectedAfterEvent!.TaskId);
     }
 
+    // Test-coverage closure (roadmap WP-024 Test Verification: "Unit tests for each Scheduling
+    // mode") — Scheduled Execution (§14) uses the identical NotBefore timestamp gate as
+    // Delayed/Periodic (see IsEligibleForItsSchedulingMode's own switch arm); this proves that
+    // shared code path under the Scheduled enum value specifically, not merely by association.
+    [Fact]
+    public async Task ScheduleAsync_MaterializesAScheduledTask_IneligibleUntilItsNotBeforeTimePasses()
+    {
+        var store = await CreateStoreAsync();
+        await ClearReadyQueueAsync(store);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var futureReview = new DispatchedTask(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Quarterly-cycle-aligned review", ["governance"], [], 5,
+            TaskLifecycleState.Created, SchedulingMode.Scheduled, DateTimeOffset.UtcNow.AddHours(1), null, false);
+
+        await scheduler.ScheduleAsync(futureReview, CancellationToken.None);
+        await scheduler.EvaluateReadinessAsync(CancellationToken.None);
+        var selectedWhileFuture = await scheduler.SelectNextDispatchableTaskAsync(CancellationToken.None);
+
+        Assert.Null(selectedWhileFuture);
+
+        var dueReview = futureReview with { NotBefore = DateTimeOffset.UtcNow.AddHours(-1) };
+        await store.UpsertAsync(dueReview with { State = TaskLifecycleState.Ready }, CancellationToken.None);
+        var selectedAfterDue = await scheduler.SelectNextDispatchableTaskAsync(CancellationToken.None);
+
+        Assert.Equal(futureReview.TaskId, selectedAfterDue!.TaskId);
+    }
+
+    // Test-coverage closure: Background Execution (§14) is eligible only during declared
+    // Maintenance Windows or genuine idle CPU capacity — currently represented by
+    // WithinMaintenanceWindow()'s disclosed always-true stub (WP-022 Implementation Plan
+    // Decision D10, no real Maintenance Window data source exists anywhere in this codebase).
+    // This proves that stub's actual, current eligibility outcome for a Background-mode Task,
+    // rather than merely asserting the constant in isolation.
+    [Fact]
+    public async Task ScheduleAsync_MaterializesABackgroundTask_EligibleUnderTheCurrentMaintenanceWindowState()
+    {
+        var store = await CreateStoreAsync();
+        await ClearReadyQueueAsync(store);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var task = new DispatchedTask(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Background maintenance sweep", ["ops"], [], 5,
+            TaskLifecycleState.Created, SchedulingMode.Background, null, null, false);
+
+        await scheduler.ScheduleAsync(task, CancellationToken.None);
+        var readyNow = await scheduler.EvaluateReadinessAsync(CancellationToken.None);
+        Assert.Contains(readyNow, readyTask => readyTask.TaskId == task.TaskId);
+
+        var selected = await scheduler.SelectNextDispatchableTaskAsync(CancellationToken.None);
+
+        Assert.Equal(task.TaskId, selected!.TaskId);
+    }
+
+    // Test-coverage closure: §14 states Idle-Time Execution has an "Identical eligibility
+    // condition to Background Execution" — this proves that equivalence directly, rather than
+    // merely asserting IdleTime's own outcome in isolation: both a Background-mode and an
+    // IdleTime-mode Task, materialized under the same system state, must both reach Ready and
+    // both be eligible.
+    [Fact]
+    public async Task ScheduleAsync_MaterializesAnIdleTimeTask_HasEligibilityEquivalentToBackground()
+    {
+        var store = await CreateStoreAsync();
+        await ClearReadyQueueAsync(store);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var backgroundTask = new DispatchedTask(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Background occurrence", ["ops"], [], 1,
+            TaskLifecycleState.Created, SchedulingMode.Background, null, null, false);
+        var idleTimeTask = new DispatchedTask(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Idle-time occurrence", ["ops"], [], 1,
+            TaskLifecycleState.Created, SchedulingMode.IdleTime, null, null, false);
+
+        await scheduler.ScheduleAsync(backgroundTask, CancellationToken.None);
+        await scheduler.ScheduleAsync(idleTimeTask, CancellationToken.None);
+        var readyNow = await scheduler.EvaluateReadinessAsync(CancellationToken.None);
+
+        Assert.Contains(readyNow, readyTask => readyTask.TaskId == backgroundTask.TaskId);
+        Assert.Contains(readyNow, readyTask => readyTask.TaskId == idleTimeTask.TaskId);
+    }
+
     [Fact]
     public async Task MarkEventObserved_Throws_WhenTheTaskDoesNotExist()
     {
