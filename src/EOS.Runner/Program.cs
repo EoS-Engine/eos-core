@@ -302,6 +302,13 @@ try
     eventMediator.Subscribe<PlannerGeneratedPayload>(
         envelope => scheduler.OnPlannerGeneratedAsync(envelope.Payload.PlanId, CancellationToken.None).GetAwaiter().GetResult());
 
+    // Real, independently tested infrastructure with no production caller yet — no CLI command
+    // or execution-cycle loop exists anywhere in this repository to repeatedly invoke
+    // DispatchNextAsync (WP-024's roadmap scope is the Scheduling Algorithm and Execution
+    // Coordinator components themselves, not a live dispatch driver), mirroring
+    // knowledgeManagementClient's/planningClient's own identical precedent above. Exercised via
+    // SchedulerExecutionCoordinatorAcceptanceTests, which drives it directly against real
+    // infrastructure.
     var executionCoordinator = new ExecutionCoordinator(
         scheduler, dispatchedTaskStore, protectionGate, new EventMediatorTaskStartedEventPublisher(eventMediator));
     _ = executionCoordinator;

@@ -116,34 +116,45 @@ public class DispatchedTaskStoreTests
         Assert.True(highIndex < lowIndex);
     }
 
+    // CodeRabbit PR #21 round 1: a lower-bound-only assertion (">= 2") would still pass even if
+    // CountByStateAsync ignored the State filter entirely, since the shared real SQL Server table
+    // already has rows from other tests. Capturing the baseline before inserting and asserting
+    // the exact delta actually proves the SQL predicate filters correctly.
     [Fact]
     public async Task CountByStateAsync_CountsOnlyTasksInTheGivenState()
     {
         var store = await CreateStoreAsync();
+        var runningBaseline = await store.CountByStateAsync(TaskLifecycleState.Running, CancellationToken.None);
+        var readyBaseline = await store.CountByStateAsync(TaskLifecycleState.Ready, CancellationToken.None);
+
         await store.UpsertAsync(NewTask(state: TaskLifecycleState.Running), CancellationToken.None);
         await store.UpsertAsync(NewTask(state: TaskLifecycleState.Running), CancellationToken.None);
         await store.UpsertAsync(NewTask(state: TaskLifecycleState.Ready), CancellationToken.None);
 
-        var runningCountBefore = await store.CountByStateAsync(TaskLifecycleState.Running, CancellationToken.None);
-        var readyCountBefore = await store.CountByStateAsync(TaskLifecycleState.Ready, CancellationToken.None);
+        var runningCountAfter = await store.CountByStateAsync(TaskLifecycleState.Running, CancellationToken.None);
+        var readyCountAfter = await store.CountByStateAsync(TaskLifecycleState.Ready, CancellationToken.None);
 
-        Assert.True(runningCountBefore >= 2);
-        Assert.True(readyCountBefore >= 1);
+        Assert.Equal(runningBaseline + 2, runningCountAfter);
+        Assert.Equal(readyBaseline + 1, readyCountAfter);
     }
 
+    // CodeRabbit PR #21 round 1: same reasoning — a lower-bound-only assertion would still pass
+    // even if CountRunningSinceAsync ignored the "since" cutoff entirely. Capturing the baseline
+    // at the same cutoff before inserting proves only the post-cutoff task is counted.
     [Fact]
     public async Task CountRunningSinceAsync_CountsOnlyTasksWithRunningAtOnOrAfterTheGivenTime()
     {
         var store = await CreateStoreAsync();
+        var since = DateTimeOffset.UtcNow.AddDays(-1);
+        var baseline = await store.CountRunningSinceAsync(since, CancellationToken.None);
+
         var recent = NewTask(state: TaskLifecycleState.Running, runningAt: DateTimeOffset.UtcNow);
         var old = NewTask(state: TaskLifecycleState.Running, runningAt: DateTimeOffset.UtcNow.AddDays(-2));
         await store.UpsertAsync(recent, CancellationToken.None);
         await store.UpsertAsync(old, CancellationToken.None);
 
-        var count = await store.CountRunningSinceAsync(DateTimeOffset.UtcNow.AddDays(-1), CancellationToken.None);
+        var countAfter = await store.CountRunningSinceAsync(since, CancellationToken.None);
 
-        var runningIds = (await store.GetByStateAsync(TaskLifecycleState.Running, CancellationToken.None)).Select(task => task.TaskId).ToList();
-        Assert.Contains(recent.TaskId, runningIds);
-        Assert.True(count >= 1);
+        Assert.Equal(baseline + 1, countAfter);
     }
 }

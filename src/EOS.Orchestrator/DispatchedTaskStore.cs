@@ -48,6 +48,17 @@ public sealed class DispatchedTaskStore(string connectionString)
         }
     }
 
+    // Known limitation, not fixed: the IF EXISTS/UPDATE-ELSE-INSERT pattern below is not atomic —
+    // two concurrent UpsertAsync calls for the same new TaskId can both pass IF EXISTS and race
+    // on INSERT, and (unlike a pure existence-only race, e.g. table creation or
+    // GoalDependencyStore's edge inserts) two concurrent calls carrying genuinely different
+    // DispatchedTask content could also silently let one caller's intended write lose to the
+    // other's, so a blind duplicate-key catch is not a safe substitute here. This mirrors every
+    // other store's identical Upsert pattern in this codebase (GoalStore, PlanStore) and
+    // Scheduler.SelectNextDispatchableTaskAsync's own disclosed TOCTOU limitation — not fixed
+    // with a new transaction/locking mechanism because no caller in this codebase invokes
+    // UpsertAsync concurrently for the same TaskId today; introducing one now would be
+    // speculative concurrency infrastructure for a caller that doesn't exist yet.
     public async Task UpsertAsync(DispatchedTask task, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(connectionString);

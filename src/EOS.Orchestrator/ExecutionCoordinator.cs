@@ -29,6 +29,15 @@ public sealed class ExecutionCoordinator(
         // competency-to-role mapping), so the Scheduler itself, the subsystem requesting this
         // dispatch, is the disclosed Actor — matching CompressionSweep's identical precedent
         // (Program.cs) of a fixed, disclosed Actor value where no real one is derivable yet.
+        //
+        // Known limitation, not fixed: EOS.Contracts.ActionRequest (frozen since WP-013, reused
+        // identically by every IProtectionClient caller in this codebase — GoalValidator,
+        // CompressionSweep, AskCommand) has no field for the specific entity an action concerns,
+        // only a freshly-generated ActionId per call. This dispatch's ActionId is therefore not
+        // task.TaskId itself; correlating a Protection log entry back to a specific Task requires
+        // timestamp/context correlation, not a direct foreign key. Not fixed here — extending
+        // ActionRequest's shape would be a breaking change to an already-frozen, widely-reused
+        // contract spanning multiple already-merged Work Packages, well beyond WP-024's own scope.
         var validation = protectionClient.Validate(new ActionRequest(
             ActionId: Guid.NewGuid(),
             ActionType: "TaskDispatch",

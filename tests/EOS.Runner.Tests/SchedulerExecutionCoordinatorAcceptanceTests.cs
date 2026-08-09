@@ -74,12 +74,24 @@ public class SchedulerExecutionCoordinatorAcceptanceTests
     }
 
     // Roadmap Test Verification: "an integration test confirming a Task is denied dispatch when
-    // Protection returns Deny."
+    // Protection returns Deny." Uses a real ProtectionGate — not a stub — driven to a genuine
+    // non-Allow verdict via EmergencyShutdownState (Protection-Layer-Specification-v1.0 §12.5/
+    // §26.1: while active, every non-control action is held at Defer). ExecutionCoordinator
+    // treats any non-Allow verdict (Deny/Defer/Retry) identically as ProtectionDenied (§25.1:
+    // "never treats a Defer as an implicit Allow"), so this exercises the real gate's actual
+    // holding behavior, not a stub standing in for it.
     [Fact]
     public async Task DispatchNextAsync_LeavesTheTaskReady_WhenRealProtectionDenies()
     {
+        var resourceManagementClient = new AlwaysSafeResourceManagementClient();
+        var realProtectionGate = new ProtectionGate(
+            new PolicyEngine([], [], [], []), new RuleEngine(), new RiskEngine(), new ApprovalEngine(),
+            new EmergencyShutdownState(),
+            new ResourceCeilings(90, 8192, 476000, 100000, 32000, 4),
+            resourceManagementClient,
+            NullLogger<ProtectionGate>.Instance);
         var (planningEngine, scheduler, dispatchedTaskStore, executionCoordinator, taskStartedPublisher) =
-            await BuildStackAsync(new AlwaysSafeResourceManagementClient(), new AlwaysDenyProtectionClient());
+            await BuildStackAsync(resourceManagementClient, realProtectionGate);
 
         var domainTags = new[] { $"wp024-demo-{Guid.NewGuid()}" };
         var goal = new Goal(
@@ -95,6 +107,11 @@ public class SchedulerExecutionCoordinatorAcceptanceTests
         var task = Assert.Single(plan.Tasks);
 
         await scheduler.EvaluateReadinessAsync(CancellationToken.None);
+
+        // Activates Emergency Shutdown on this same real ProtectionGate instance — goal
+        // submission above already completed via GoalValidator's own AlwaysAllowProtectionClient
+        // (a separate instance), so this only affects the dispatch-time gate under test.
+        realProtectionGate.Validate(new ActionRequest(Guid.NewGuid(), "EmergencyShutdown", "Test", 10));
 
         var result = await executionCoordinator.DispatchNextAsync(CancellationToken.None);
 
@@ -175,11 +192,6 @@ public class SchedulerExecutionCoordinatorAcceptanceTests
     private sealed class AlwaysAllowProtectionClient : IProtectionClient
     {
         public ValidationResult Validate(ActionRequest action) => new(ProtectionVerdict.Allow, RiskTier.Low, null);
-    }
-
-    private sealed class AlwaysDenyProtectionClient : IProtectionClient
-    {
-        public ValidationResult Validate(ActionRequest action) => new(ProtectionVerdict.Deny, RiskTier.Low, "Denied by test.");
     }
 
     private sealed class AlwaysSafeResourceManagementClient : IResourceManagementClient
