@@ -174,10 +174,12 @@ public class StageEngineTests
     }
 
     [Fact]
-    public async Task PromoteToBestPracticeAsync_DoesNotAdvanceTheStage_WhenTransitionRecordPersistenceFails()
+    public async Task PromoteToBestPracticeAsync_DoesNotAdvanceTheStageOrApprovalRefs_WhenTransitionRecordPersistenceFails()
     {
         // CodeRabbit R1 finding #8: the TransitionRecord must be persisted before the stage
         // write — a failed insert must never leave the record promoted with no evidence trail.
+        // CodeRabbit R2 finding #1: the same failure must also leave ApprovalRefs untouched —
+        // approval evidence must never exist without its corresponding TransitionRecord.
         var records = new InMemoryPipelineRecordStore();
         var throwingTransitions = new ThrowingOnInsertTransitionRecordStore();
         var engine = new StageEngine(
@@ -191,6 +193,7 @@ public class StageEngineTests
             () => engine.PromoteToBestPracticeAsync(record.RecordId, "ADR-999", "PrincipalEngineer", CancellationToken.None));
 
         Assert.Equal(PipelineStage.Pattern, records.Find(record.RecordId)!.Stage);
+        Assert.DoesNotContain("ADR-999", records.Find(record.RecordId)!.ApprovalRefs);
     }
 
     [Fact]

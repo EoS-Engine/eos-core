@@ -48,8 +48,10 @@ public sealed class StageEngine(
             throw new ArgumentException("ratifyingRole must not be empty.", nameof(ratifyingRole));
         }
 
-        await pipelineRecordStore.UpdateApprovalRefsAsync(recordId, [.. record.ApprovalRefs, adrReference], cancellationToken);
+        // CodeRabbit R2 finding #1: persist the transition evidence before recording approval —
+        // a failed PersistTransitionAsync must leave ApprovalRefs untouched too, not just Stage.
         await PersistTransitionAsync(record, PipelineStage.BestPractice, ratifyingRole, [adrReference], cancellationToken);
+        await pipelineRecordStore.UpdateApprovalRefsAsync(recordId, [.. record.ApprovalRefs, adrReference], cancellationToken);
         bestPracticeRatifiedEventPublisher.PublishBestPracticeRatified(recordId);
 
         return new StagePromotionResult(true, PipelineStage.BestPractice, "Ratified.");
