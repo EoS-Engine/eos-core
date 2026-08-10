@@ -4,6 +4,7 @@ using EOS.Infrastructure;
 using EOS.Contracts;
 using EOS.Knowledge;
 using EOS.KnowledgeGraph;
+using EOS.Learning;
 using EOS.Orchestrator;
 using EOS.Planner;
 using EOS.Reasoning;
@@ -209,6 +210,37 @@ try
         new EventMediatorContextExpansionRequestedEventPublisher(eventMediator),
         host.Services.GetRequiredService<ILogger<ReasoningEngine>>());
 
+    // WP-026: Learning Engine — Ingestion, Clustering & Pattern Promotion
+    // (Learning-Engine-Specification-v1.1 §11.1/§11.2). Replaces WP-016's
+    // NotYetPromotedPipelineStageStore stub with the real, WP-026-backed adapter.
+    var pipelineRecordStore = new PipelineRecordStore(connectionOptions.SqlServerConnectionString);
+    await pipelineRecordStore.EnsureTableExistsAsync(CancellationToken.None);
+    var ingestionRateGuardStore = new IngestionRateGuardStore(connectionOptions.SqlServerConnectionString);
+    await ingestionRateGuardStore.EnsureTableExistsAsync(CancellationToken.None);
+
+    var ingestionRateGuard = new IngestionRateGuard(
+        ingestionRateGuardStore, thresholdsOptions.IngestionRateWindowSeconds, thresholdsOptions.IngestionRateThresholdCount);
+    var confidenceGuard = new ConfidenceGuard();
+    var clusterTrigger = new ClusterTrigger(
+        knowledgeClient,
+        reasoningEngine,
+        pipelineRecordStore,
+        confidenceGuard,
+        new EventMediatorLessonPromotedEventPublisher(eventMediator),
+        thresholdsOptions.ClusteringConfidenceMinimum);
+    var ingestion = new Ingestion(
+        knowledgeClient,
+        reasoningEngine,
+        pipelineRecordStore,
+        ingestionRateGuard,
+        clusterTrigger,
+        new EventMediatorLessonQuarantinedEventPublisher(eventMediator));
+    eventMediator.Subscribe<LessonLearnedPayload>(
+        envelope => ingestion.OnLessonLearnedAsync(envelope.Payload.EpisodicEntryId, envelope.Payload.Source, CancellationToken.None)
+            .GetAwaiter().GetResult());
+
+    var pipelineStageStoreAdapter = new PipelineStageStoreAdapter(pipelineRecordStore);
+
     // Real, independently tested infrastructure with no production caller yet — no WP before
     // this one has a reason to classify a node or add a relationship in the "ask" path.
     var freshnessTypeWeights = knowledgeOptions.FreshnessTypeWeights
@@ -243,7 +275,7 @@ try
     var compressionSweep = new CompressionSweep(
         knowledgeGraphStore,
         archivedContentStore,
-        new NotYetPromotedPipelineStageStore(),
+        pipelineStageStoreAdapter,
         new NeverReadRecentlyStub(),
         new NoActiveRetentionHoldsStub(),
         new ReasoningEngineSummarizerAdapter(reasoningEngine, thresholdsOptions.SummarizationStubTruncationLength),
@@ -660,18 +692,6 @@ internal sealed class RedisMemorySourceStore(RedisMemoryStore redisMemoryStore) 
 }
 
 /// <summary>
-/// WP-016's stub for <see cref="IPipelineStageStore"/> (see that interface's own documentation
-/// for why): no <c>PipelineRecord</c> exists anywhere until WP-026, so no entry can be proven
-/// to have reached <c>Pattern</c> stage — always reporting <see langword="false"/> is the
-/// architecturally correct answer, not a placeholder.
-/// </summary>
-internal sealed class NotYetPromotedPipelineStageStore : IPipelineStageStore
-{
-    public Task<bool> HasReachedPatternStageOrBeyondAsync(
-        Guid episodicEntryId, CancellationToken cancellationToken = default) => Task.FromResult(false);
-}
-
-/// <summary>
 /// WP-020: real backing for <see cref="ISummarizer"/> (WP-016's own interface — see its
 /// documentation), bridging to <see cref="IReasoningEngineClient.SummarizeAsync"/>. Replaces
 /// WP-016's <c>TruncatingSummarizerStub</c>, per the WP-020 roadmap row's own expected
@@ -1067,6 +1087,38 @@ internal sealed class EventMediatorMemoryConsolidatedEventPublisher(EventMediato
             version: "v1",
             producer: "EOS.Knowledge",
             payload: new MemoryConsolidatedPayload(sourceMemoryType, episodicEntryId)));
+    }
+}
+
+// WP-026: Constitution Part 3's LessonPromoted event, reused verbatim (§600: "lesson_id ->
+// pattern_id"), producer: Learning Engine.
+internal sealed record LessonPromotedPayload(Guid LessonId, Guid PatternId);
+
+internal sealed class EventMediatorLessonPromotedEventPublisher(EventMediator eventMediator) : ILessonPromotedEventPublisher
+{
+    public void PublishLessonPromoted(Guid recordId, Guid patternRecordId)
+    {
+        eventMediator.Publish(EventEnvelope<LessonPromotedPayload>.Create(
+            eventType: "LessonPromoted",
+            version: "v1",
+            producer: "EOS.Learning",
+            payload: new LessonPromotedPayload(recordId, patternRecordId)));
+    }
+}
+
+// WP-026: Learning-Engine-Specification-v1.1 §15's LessonQuarantined event (new in v1.1),
+// producer: Learning Engine.
+internal sealed record LessonQuarantinedPayload(Guid RecordId, string Reason);
+
+internal sealed class EventMediatorLessonQuarantinedEventPublisher(EventMediator eventMediator) : ILessonQuarantinedEventPublisher
+{
+    public void PublishLessonQuarantined(Guid recordId, string reason)
+    {
+        eventMediator.Publish(EventEnvelope<LessonQuarantinedPayload>.Create(
+            eventType: "LessonQuarantined",
+            version: "v1",
+            producer: "EOS.Learning",
+            payload: new LessonQuarantinedPayload(recordId, reason)));
     }
 }
 
