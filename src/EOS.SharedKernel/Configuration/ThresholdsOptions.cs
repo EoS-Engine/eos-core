@@ -278,4 +278,10 @@ public sealed record ThresholdsOptions
     // Implementation Authorization).
     [Range(0.0, 1.0)]
     public required double ClusteringConfidenceMinimum { get; init; }
+
+    // Learning-Engine-Specification-v1.1 §16/§24.5, Constitution Part 14.1: "BestPractice
+    // generalizes across ≥2 domains" is a promotion-rule constant (§24.5 names "≥2 domains" as
+    // its own example of what must be Thresholds.json-sourced, not hardcoded). WP-027 Decision 7.
+    [Range(1, int.MaxValue)]
+    public required int DomainGeneralizationMinimumCount { get; init; }
 }

@@ -126,6 +126,68 @@ public sealed class PipelineRecordStore(string connectionString) : IPipelineReco
             cancellationToken);
     }
 
+    public async Task<PipelineRecord?> GetByIdAsync(Guid recordId, CancellationToken cancellationToken = default)
+    {
+        var results = await QueryAsync(
+            "WHERE RecordId = @RecordId",
+            command => command.Parameters.AddWithValue("@RecordId", recordId),
+            cancellationToken);
+        return results.FirstOrDefault();
+    }
+
+    public Task<IReadOnlyList<PipelineRecord>> GetByStatusAsync(
+        PipelineRecordStatus status, CancellationToken cancellationToken = default) =>
+        QueryAsync(
+            "WHERE Status = @Status",
+            command => command.Parameters.AddWithValue("@Status", status.ToString()),
+            cancellationToken);
+
+    public async Task UpdateApprovalRefsAsync(
+        Guid recordId, string[] approvalRefs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE PipelineRecord
+            SET ApprovalRefsJson = @ApprovalRefsJson, LastAdvancedAt = @LastAdvancedAt
+            WHERE RecordId = @RecordId
+            """;
+        command.Parameters.AddWithValue("@ApprovalRefsJson", JsonSerializer.Serialize(approvalRefs));
+        command.Parameters.AddWithValue("@LastAdvancedAt", DateTimeOffset.UtcNow);
+        command.Parameters.AddWithValue("@RecordId", recordId);
+
+        var affected = await command.ExecuteNonQueryAsync(cancellationToken);
+        if (affected == 0)
+        {
+            throw new InvalidOperationException($"PipelineRecord '{recordId}' was not found.");
+        }
+    }
+
+    public async Task UpdateRoiEvaluationRefAsync(
+        Guid recordId, string roiEvaluationRef, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE PipelineRecord
+            SET RoiEvaluationRef = @RoiEvaluationRef, LastAdvancedAt = @LastAdvancedAt
+            WHERE RecordId = @RecordId
+            """;
+        command.Parameters.AddWithValue("@RoiEvaluationRef", roiEvaluationRef);
+        command.Parameters.AddWithValue("@LastAdvancedAt", DateTimeOffset.UtcNow);
+        command.Parameters.AddWithValue("@RecordId", recordId);
+
+        var affected = await command.ExecuteNonQueryAsync(cancellationToken);
+        if (affected == 0)
+        {
+            throw new InvalidOperationException($"PipelineRecord '{recordId}' was not found.");
+        }
+    }
+
     public async Task UpdateStageAsync(
         Guid recordId,
         PipelineStage stage,

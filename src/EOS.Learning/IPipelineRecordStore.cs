@@ -32,6 +32,16 @@ public interface IPipelineRecordStore
         IEnumerable<Guid> knowledgeGraphRefs, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// WP-027: direct lookup by <see cref="PipelineRecord.RecordId"/> — the stage-promotion
+    /// pipeline (Pattern and beyond) operates on records already resolved by their own identity,
+    /// not by a source Lesson or a candidate KnowledgeGraphRef set.
+    /// </summary>
+    Task<PipelineRecord?> GetByIdAsync(Guid recordId, CancellationToken cancellationToken = default);
+
+    /// <summary>WP-027: <see cref="StallDetector"/>/<see cref="FitnessMonitor"/> need to enumerate records by <see cref="PipelineRecordStatus"/> (e.g. all <see cref="PipelineRecordStatus.Active"/> records to check for staleness).</summary>
+    Task<IReadOnlyList<PipelineRecord>> GetByStatusAsync(PipelineRecordStatus status, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// §11.2's <c>StageEngine.promote(record, to=Pattern, evidence=guard_result)</c> — mutates
     /// the same record in place (never creates a new one), and the confidence-only-update path
     /// ("no promotion; not an error, just insufficient confidence") which updates
@@ -43,4 +53,18 @@ public interface IPipelineRecordStore
         PipelineRecordStatus status,
         double confidenceScore,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// WP-027: makes <see cref="PipelineRecord.ApprovalRefs"/> writable post-creation — e.g.
+    /// Pattern→BestPractice's "Principal Engineer ratification, ADR-linked" (§16) records the
+    /// ADR reference here.
+    /// </summary>
+    Task UpdateApprovalRefsAsync(Guid recordId, string[] approvalRefs, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// WP-027: makes <see cref="PipelineRecord.RoiEvaluationRef"/> writable post-creation — set
+    /// by the ROI Gate (§11.3) on every evaluation attempt, whether denied, threshold-unavailable,
+    /// or (once <c>roi_minimum</c> is supplied) a real pass/fail comparison.
+    /// </summary>
+    Task UpdateRoiEvaluationRefAsync(Guid recordId, string roiEvaluationRef, CancellationToken cancellationToken = default);
 }

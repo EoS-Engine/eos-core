@@ -41,6 +41,16 @@ internal sealed class InMemoryPipelineRecordStore : IPipelineRecordStore
         return Task.FromResult(result);
     }
 
+    public Task<PipelineRecord?> GetByIdAsync(Guid recordId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Find(recordId));
+
+    public Task<IReadOnlyList<PipelineRecord>> GetByStatusAsync(
+        PipelineRecordStatus status, CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<PipelineRecord> result = _records.Where(record => record.Status == status).ToList();
+        return Task.FromResult(result);
+    }
+
     public Task UpdateStageAsync(
         Guid recordId, PipelineStage stage, PipelineRecordStatus status, double confidenceScore, CancellationToken cancellationToken = default)
     {
@@ -48,6 +58,28 @@ internal sealed class InMemoryPipelineRecordStore : IPipelineRecordStore
         if (index >= 0)
         {
             _records[index] = _records[index] with { Stage = stage, Status = status, ConfidenceScore = confidenceScore };
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateApprovalRefsAsync(Guid recordId, string[] approvalRefs, CancellationToken cancellationToken = default)
+    {
+        var index = _records.FindIndex(record => record.RecordId == recordId);
+        if (index >= 0)
+        {
+            _records[index] = _records[index] with { ApprovalRefs = approvalRefs };
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateRoiEvaluationRefAsync(Guid recordId, string roiEvaluationRef, CancellationToken cancellationToken = default)
+    {
+        var index = _records.FindIndex(record => record.RecordId == recordId);
+        if (index >= 0)
+        {
+            _records[index] = _records[index] with { RoiEvaluationRef = roiEvaluationRef };
         }
 
         return Task.CompletedTask;
@@ -70,9 +102,153 @@ internal sealed class ThrowingOnInsertPipelineRecordStore : IPipelineRecordStore
         IEnumerable<Guid> knowledgeGraphRefs, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<PipelineRecord>>([]);
 
+    public Task<PipelineRecord?> GetByIdAsync(Guid recordId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<PipelineRecord?>(null);
+
+    public Task<IReadOnlyList<PipelineRecord>> GetByStatusAsync(
+        PipelineRecordStatus status, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PipelineRecord>>([]);
+
     public Task UpdateStageAsync(
         Guid recordId, PipelineStage stage, PipelineRecordStatus status, double confidenceScore, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("Simulated persistence failure.");
+
+    public Task UpdateApprovalRefsAsync(Guid recordId, string[] approvalRefs, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Simulated persistence failure.");
+
+    public Task UpdateRoiEvaluationRefAsync(Guid recordId, string roiEvaluationRef, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Simulated persistence failure.");
+}
+
+internal sealed class InMemoryTransitionRecordStore : ITransitionRecordStore
+{
+    private readonly List<TransitionRecord> _records = [];
+
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task InsertAsync(TransitionRecord record, CancellationToken cancellationToken = default)
+    {
+        _records.Add(record);
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<TransitionRecord>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<TransitionRecord> result = _records.ToList();
+        return Task.FromResult(result);
+    }
+
+    public Task<IReadOnlyList<TransitionRecord>> GetByRecordIdAsync(Guid recordId, CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<TransitionRecord> result = _records.Where(r => r.RecordId == recordId).ToList();
+        return Task.FromResult(result);
+    }
+
+    /// <summary>Test-only mutation hook, used to simulate tampering/corruption for IntegrityChecker tests.</summary>
+    public void ReplaceLast(TransitionRecord replacement)
+    {
+        _records[^1] = replacement;
+    }
+}
+
+/// <summary>CodeRabbit R1 finding #8: proves a failed TransitionRecord insert cannot leave a record promoted.</summary>
+internal sealed class ThrowingOnInsertTransitionRecordStore : ITransitionRecordStore
+{
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task InsertAsync(TransitionRecord record, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Simulated persistence failure.");
+
+    public Task<IReadOnlyList<TransitionRecord>> GetAllAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TransitionRecord>>([]);
+
+    public Task<IReadOnlyList<TransitionRecord>> GetByRecordIdAsync(Guid recordId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TransitionRecord>>([]);
+}
+
+internal sealed class RecordingBestPracticeRatifiedEventPublisher : IBestPracticeRatifiedEventPublisher
+{
+    public int CallCount { get; private set; }
+    public void PublishBestPracticeRatified(Guid recordId) => CallCount++;
+}
+
+internal sealed class RecordingPrincipleGeneralizedEventPublisher : IPrincipleGeneralizedEventPublisher
+{
+    public int CallCount { get; private set; }
+    public void PublishPrincipleGeneralized(Guid recordId) => CallCount++;
+}
+
+internal sealed class RecordingGoldenPathCodifiedEventPublisher : IGoldenPathCodifiedEventPublisher
+{
+    public int CallCount { get; private set; }
+    public void PublishGoldenPathCodified(Guid recordId) => CallCount++;
+}
+
+internal sealed class RecordingPlatformCapabilityPipelineAdvancedEventPublisher : IPlatformCapabilityPipelineAdvancedEventPublisher
+{
+    public int CallCount { get; private set; }
+    public void PublishPlatformCapabilityPipelineAdvanced(Guid recordId) => CallCount++;
+}
+
+internal sealed class RecordingLessonQuarantineClearedEventPublisher : ILessonQuarantineClearedEventPublisher
+{
+    public int CallCount { get; private set; }
+    public Guid LastRecordId { get; private set; }
+    public string? LastClearingRole { get; private set; }
+    public string? LastJustification { get; private set; }
+
+    public void PublishLessonQuarantineCleared(Guid recordId, string clearingRole, string justification)
+    {
+        CallCount++;
+        LastRecordId = recordId;
+        LastClearingRole = clearingRole;
+        LastJustification = justification;
+    }
+}
+
+internal sealed class RecordingDataIntegrityViolationDetectedEventPublisher : IDataIntegrityViolationDetectedEventPublisher
+{
+    public int CallCount { get; private set; }
+    public void PublishDataIntegrityViolationDetected(Guid recordId, PipelineStage fromStage, PipelineStage toStage) => CallCount++;
+}
+
+/// <summary>CodeRabbit R1 finding #4: proves Quarantine persistence happens before this publisher is even reached.</summary>
+internal sealed class ThrowingDataIntegrityViolationDetectedEventPublisher : IDataIntegrityViolationDetectedEventPublisher
+{
+    public void PublishDataIntegrityViolationDetected(Guid recordId, PipelineStage fromStage, PipelineStage toStage) =>
+        throw new InvalidOperationException("Simulated publish failure.");
+}
+
+internal sealed class RecordingFitnessFunctionViolatedEventPublisher : IFitnessFunctionViolatedEventPublisher
+{
+    public int CallCount { get; private set; }
+    public string? LastFitnessFunctionId { get; private set; }
+
+    public void PublishFitnessFunctionViolated(string fitnessFunctionId, double observedValue, double threshold)
+    {
+        CallCount++;
+        LastFitnessFunctionId = fitnessFunctionId;
+    }
+}
+
+internal sealed class RecordingLessonStalledEventPublisher : ILessonStalledEventPublisher
+{
+    public int CallCount { get; private set; }
+    public void PublishLessonStalled(Guid recordId) => CallCount++;
+}
+
+internal sealed class RecordingSelfReferentialOutcomeFlaggedEventPublisher : ISelfReferentialOutcomeFlaggedEventPublisher
+{
+    public int CallCount { get; private set; }
+    public void PublishSelfReferentialOutcomeFlagged(Guid recordId, Guid taskId) => CallCount++;
+}
+
+internal sealed class FixedTaskProvenanceQueryClient : ITaskProvenanceQueryClient
+{
+    public IReadOnlyList<Guid> SelfReferentialTaskIds { get; set; } = [];
+
+    public Task<IReadOnlyList<Guid>> GetSelfReferentialTaskIdsAsync(Guid knowledgeGraphRef, CancellationToken cancellationToken = default) =>
+        Task.FromResult(SelfReferentialTaskIds);
 }
 
 internal sealed class InMemoryIngestionRateGuardStore : IIngestionRateGuardStore
