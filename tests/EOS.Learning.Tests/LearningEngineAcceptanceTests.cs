@@ -102,8 +102,8 @@ public class LearningEngineAcceptanceTests
                 await ingestion.OnLessonLearnedAsync(episodicEntryId, key, CancellationToken.None);
             }
 
-            var firstThreeStayAsLessons = episodicEntryIds.Take(3)
-                .Select(id => pipelineRecordStore.GetBySourceLessonIdAsync(id, CancellationToken.None).Result);
+            var firstThreeStayAsLessons = await Task.WhenAll(
+                episodicEntryIds.Take(3).Select(id => pipelineRecordStore.GetBySourceLessonIdAsync(id, CancellationToken.None)));
             Assert.All(firstThreeStayAsLessons, record => Assert.Equal(PipelineStage.Lesson, record!.Stage));
 
             var fourthRecord = await pipelineRecordStore.GetBySourceLessonIdAsync(episodicEntryIds[3], CancellationToken.None);

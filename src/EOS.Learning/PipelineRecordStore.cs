@@ -37,6 +37,8 @@ public sealed class PipelineRecordStore(string connectionString) : IPipelineReco
                 ConfidenceScore FLOAT NOT NULL,
                 Status NVARCHAR(50) NOT NULL
             )
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_PipelineRecord_KnowledgeGraphRef')
+            CREATE UNIQUE INDEX UX_PipelineRecord_KnowledgeGraphRef ON PipelineRecord (KnowledgeGraphRef)
             """;
 
         try
@@ -45,8 +47,10 @@ public sealed class PipelineRecordStore(string connectionString) : IPipelineReco
         }
         catch (SqlException ex) when (ex.Number is 2705 or 1913 or 2714)
         {
-            // Benign race on the non-atomic IF NOT EXISTS guard above, matching
-            // PlanStore's/KnowledgeGraphStore's exact established precedent.
+            // Benign race on the non-atomic IF NOT EXISTS guards above, matching
+            // PlanStore's/KnowledgeGraphStore's exact established precedent. 1913 here is a
+            // genuine "duplicate index name" race on the new UNIQUE INDEX guard, not a
+            // malformed CREATE TABLE statement.
         }
     }
 
@@ -84,7 +88,10 @@ public sealed class PipelineRecordStore(string connectionString) : IPipelineReco
     public async Task<PipelineRecord?> GetBySourceLessonIdAsync(
         Guid episodicEntryId, CancellationToken cancellationToken = default)
     {
-        var all = await QueryAllAsync(cancellationToken);
+        // SourceLessonIdsJson is a JSON array column — per this codebase's own convention (no
+        // store anywhere queries into a JSON array column via SQL), this fetches all rows and
+        // filters in C#, exactly like KnowledgeClient.QuerySimilarAsync does.
+        var all = await QueryAsync(whereClause: null, bindParameters: null, cancellationToken);
         return all.FirstOrDefault(record => record.SourceLessonIds.Contains(episodicEntryId));
     }
 
@@ -92,8 +99,26 @@ public sealed class PipelineRecordStore(string connectionString) : IPipelineReco
         IEnumerable<Guid> knowledgeGraphRefs, CancellationToken cancellationToken = default)
     {
         var refs = knowledgeGraphRefs.ToHashSet();
-        var all = await QueryAllAsync(cancellationToken);
-        return all.Where(record => refs.Contains(record.KnowledgeGraphRef)).ToList();
+        if (refs.Count == 0)
+        {
+            return [];
+        }
+
+        // Unlike SourceLessonIdsJson, KnowledgeGraphRef is a real (non-JSON) column, so this
+        // filter can — and, for cost that no longer grows with total pipeline history
+        // regardless of candidate-pool size, should — run in SQL.
+        var parameterNames = refs.Select((_, index) => $"@Ref{index}").ToArray();
+        return await QueryAsync(
+            whereClause: $"WHERE KnowledgeGraphRef IN ({string.Join(", ", parameterNames)})",
+            bindParameters: command =>
+            {
+                var refArray = refs.ToArray();
+                for (var index = 0; index < refArray.Length; index++)
+                {
+                    command.Parameters.AddWithValue(parameterNames[index], refArray[index]);
+                }
+            },
+            cancellationToken);
     }
 
     public async Task UpdateStageAsync(
@@ -119,20 +144,32 @@ public sealed class PipelineRecordStore(string connectionString) : IPipelineReco
         command.Parameters.AddWithValue("@LastAdvancedAt", DateTimeOffset.UtcNow);
         command.Parameters.AddWithValue("@RecordId", recordId);
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        // Persistence failures must stay observable rather than being silently converted into
+        // success — a promotion (or any other stage/status write) that targets a RecordId which
+        // no longer resolves to a row must never be treated as if it had actually been
+        // persisted, since the caller (ClusterTrigger) only publishes LessonPromoted after this
+        // call returns successfully.
+        var affected = await command.ExecuteNonQueryAsync(cancellationToken);
+        if (affected == 0)
+        {
+            throw new InvalidOperationException($"PipelineRecord '{recordId}' was not found.");
+        }
     }
 
-    private async Task<IReadOnlyList<PipelineRecord>> QueryAllAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<PipelineRecord>> QueryAsync(
+        string? whereClause, Action<SqlCommand>? bindParameters, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT RecordId, Stage, KnowledgeGraphRef, SourceLessonIdsJson, DomainTagsJson, CreatedAt,
                    LastAdvancedAt, ApprovalRefsJson, RoiEvaluationRef, TrustScore, ConfidenceScore, Status
             FROM PipelineRecord
+            {whereClause}
             """;
+        bindParameters?.Invoke(command);
 
         var results = new List<PipelineRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

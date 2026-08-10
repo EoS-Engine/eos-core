@@ -71,10 +71,15 @@ public class ClusterTriggerTests
     [Fact]
     public async Task EvaluateAsync_DoesNotPromote_WhenFewerThanThreeAcceptedMatches()
     {
+        // 3 resolved candidates are supplied (not 2), and only 2 of them are returned as
+        // accepted — this proves the promotion gate is genuinely AcceptedMatches.Length, not
+        // merely "how many candidates were resolved," per CodeRabbit finding #5: a defect that
+        // checked the candidate count instead of AcceptedMatches.Length would still pass a
+        // version of this test that only ever supplied 2 candidates.
         var store = new InMemoryPipelineRecordStore();
         var record = TestRecords.Lesson(trustScore: 1.0);
         await store.InsertAsync(record, CancellationToken.None);
-        var candidates = Enumerable.Range(0, 2).Select(_ => TestRecords.Lesson()).ToArray();
+        var candidates = Enumerable.Range(0, 3).Select(_ => TestRecords.Lesson()).ToArray();
         foreach (var candidate in candidates)
         {
             await store.InsertAsync(candidate, CancellationToken.None);
@@ -86,7 +91,13 @@ public class ClusterTriggerTests
         };
         var reasoningEngineClient = new FixedReasoningEngineClient
         {
-            CompareResult = (_, candidateList) => new ConfidenceGuardResult(1.0, candidateList.ToArray(), []),
+            CompareResult = (_, candidateList) =>
+            {
+                var resolved = candidateList.ToArray();
+                var accepted = resolved.Take(2).ToArray();
+                var rejected = resolved.Skip(2).Select(c => new RejectedMatch(c, "excluded for this test")).ToArray();
+                return new ConfidenceGuardResult(1.0, accepted, rejected);
+            },
         };
         var publisher = new NeverCalledLessonPromotedEventPublisher();
         var trigger = new ClusterTrigger(knowledgeClient, reasoningEngineClient, store, new ConfidenceGuard(), publisher, 0.5);

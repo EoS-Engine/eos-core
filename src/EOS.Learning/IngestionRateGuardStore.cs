@@ -45,16 +45,28 @@ public sealed class IngestionRateGuardStore(string connectionString) : IIngestio
         await connection.OpenAsync(cancellationToken);
 
         await using var command = connection.CreateCommand();
+        // SERIALIZABLE isolation makes the UPDATE's WHERE clause (matching the primary key
+        // exactly) take a key-range lock covering that key even when zero rows currently match
+        // — a concurrent transaction attempting to UPDATE or INSERT the same (ProducerRole,
+        // WindowStart) key blocks until this transaction commits, so two concurrent "first
+        // events" for a brand-new bucket can no longer both fall through to INSERT and collide
+        // on PK_IngestionRateGuardState. Scoped to this single connection/command only — the
+        // isolation level and transaction are both torn down when the connection is disposed.
         command.CommandText = """
-            IF EXISTS (SELECT 1 FROM IngestionRateGuardState WHERE ProducerRole = @ProducerRole AND WindowStart = @WindowStart)
-                UPDATE IngestionRateGuardState
-                SET EventCount = EventCount + 1
-                WHERE ProducerRole = @ProducerRole AND WindowStart = @WindowStart
-            ELSE
+            SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+            BEGIN TRANSACTION;
+
+            UPDATE IngestionRateGuardState
+            SET EventCount = EventCount + 1
+            WHERE ProducerRole = @ProducerRole AND WindowStart = @WindowStart;
+
+            IF @@ROWCOUNT = 0
                 INSERT INTO IngestionRateGuardState (ProducerRole, WindowStart, WindowEnd, EventCount)
                 VALUES (@ProducerRole, @WindowStart, @WindowEnd, 1);
 
-            SELECT EventCount FROM IngestionRateGuardState WHERE ProducerRole = @ProducerRole AND WindowStart = @WindowStart
+            SELECT EventCount FROM IngestionRateGuardState WHERE ProducerRole = @ProducerRole AND WindowStart = @WindowStart;
+
+            COMMIT TRANSACTION;
             """;
         command.Parameters.AddWithValue("@ProducerRole", producerRole);
         command.Parameters.AddWithValue("@WindowStart", windowStart);
