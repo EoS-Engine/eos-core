@@ -56,6 +56,20 @@ internal sealed class NoOpPlannerGeneratedEventPublisher : IPlannerGeneratedEven
     }
 }
 
+internal sealed class NoOpReplanTriggeredEventPublisher : IReplanTriggeredEventPublisher
+{
+    public void PublishReplanTriggered(Guid goalId, string triggerType)
+    {
+    }
+}
+
+internal sealed class RecordingReplanTriggeredEventPublisher : IReplanTriggeredEventPublisher
+{
+    public List<(Guid GoalId, string TriggerType)> Published { get; } = [];
+
+    public void PublishReplanTriggered(Guid goalId, string triggerType) => Published.Add((goalId, triggerType));
+}
+
 /// <summary>
 /// Hand-rolled <see cref="IKnowledgeClient"/> stub (this repository uses no mocking framework)
 /// returning a fixed set of <see cref="KnowledgeNode"/> instances from

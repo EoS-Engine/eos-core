@@ -31,7 +31,8 @@ public class SchedulerTests
         GoalId: Guid.NewGuid(),
         Tasks: tasks,
         EstimatedResourceCost: tasks.Length,
-        RiskAdjustedConfidenceScore: 1.0);
+        RiskAdjustedConfidenceScore: 1.0,
+        PreviousPlanId: null);
 
     private static PlanTask NewPlanTask(Guid[]? dependsOnTaskIds = null) => new(
         TaskId: Guid.NewGuid(),
@@ -45,7 +46,7 @@ public class SchedulerTests
         var store = await CreateStoreAsync();
         var planTask = NewPlanTask();
         var plan = NewPlan(planTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         scheduler.OnTaskCreated(planTask.TaskId, priority: 5);
         await scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None);
@@ -65,7 +66,7 @@ public class SchedulerTests
         var store = await CreateStoreAsync();
         var planTask = NewPlanTask();
         var plan = NewPlan(planTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None));
@@ -83,7 +84,7 @@ public class SchedulerTests
         var succeedingTask = NewPlanTask();
         var failingTask = NewPlanTask();
         var plan = NewPlan(succeedingTask, failingTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         // Only the first task's priority is cached — the second's lookup fails partway through
         // the loop, after the first has already been fully written through to Planned.
         scheduler.OnTaskCreated(succeedingTask.TaskId, priority: 1);
@@ -111,7 +112,7 @@ public class SchedulerTests
         var store = await CreateStoreAsync();
         var planTask = NewPlanTask();
         var plan = NewPlan(planTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         scheduler.OnTaskCreated(planTask.TaskId, priority: 1);
         using var alreadyCancelled = new CancellationTokenSource();
         await alreadyCancelled.CancelAsync();
@@ -127,7 +128,7 @@ public class SchedulerTests
     public async Task OnPlannerGeneratedAsync_Throws_WhenThePlanDoesNotExist()
     {
         var store = await CreateStoreAsync();
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => scheduler.OnPlannerGeneratedAsync(Guid.NewGuid(), CancellationToken.None));
@@ -139,7 +140,7 @@ public class SchedulerTests
         var store = await CreateStoreAsync();
         var planTask = NewPlanTask();
         var plan = NewPlan(planTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         scheduler.OnTaskCreated(planTask.TaskId, priority: 1);
         await scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None);
 
@@ -157,7 +158,7 @@ public class SchedulerTests
         var dependencyTask = NewPlanTask();
         var dependentTask = NewPlanTask(dependsOnTaskIds: [dependencyTask.TaskId]);
         var plan = NewPlan(dependencyTask, dependentTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         scheduler.OnTaskCreated(dependencyTask.TaskId, priority: 1);
         scheduler.OnTaskCreated(dependentTask.TaskId, priority: 1);
         await scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None);
@@ -178,7 +179,7 @@ public class SchedulerTests
         var dependencyTask = NewPlanTask();
         var dependentTask = NewPlanTask(dependsOnTaskIds: [dependencyTask.TaskId]);
         var plan = NewPlan(dependencyTask, dependentTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         scheduler.OnTaskCreated(dependencyTask.TaskId, priority: 1);
         scheduler.OnTaskCreated(dependentTask.TaskId, priority: 1);
         await scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None);
@@ -195,7 +196,7 @@ public class SchedulerTests
     {
         var store = await CreateStoreAsync();
         await ClearReadyQueueAsync(store);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         var selected = await scheduler.SelectNextDispatchableTaskAsync(CancellationToken.None);
 
@@ -210,7 +211,7 @@ public class SchedulerTests
         var low = NewPlanTask();
         var high = NewPlanTask();
         var plan = NewPlan(low, high);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         scheduler.OnTaskCreated(low.TaskId, priority: 1);
         scheduler.OnTaskCreated(high.TaskId, priority: 9);
         await scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None);
@@ -229,7 +230,7 @@ public class SchedulerTests
         var store = await CreateStoreAsync();
         var planTask = NewPlanTask();
         var plan = NewPlan(planTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(tier), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(tier), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         scheduler.OnTaskCreated(planTask.TaskId, priority: 1);
         await scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None);
         await scheduler.EvaluateReadinessAsync(CancellationToken.None);
@@ -248,7 +249,7 @@ public class SchedulerTests
         await ClearReadyQueueAsync(store);
         var planTask = NewPlanTask();
         var plan = NewPlan(planTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(tier), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(tier), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         scheduler.OnTaskCreated(planTask.TaskId, priority: 1);
         await scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None);
         await scheduler.EvaluateReadinessAsync(CancellationToken.None);
@@ -264,12 +265,12 @@ public class SchedulerTests
         var store = await CreateStoreAsync();
         var planTask = NewPlanTask();
         var plan = NewPlan(planTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1, dailyCapacity: 100);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1, dailyCapacity: 100);
         scheduler.OnTaskCreated(planTask.TaskId, priority: 1);
         await scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None);
         await scheduler.EvaluateReadinessAsync(CancellationToken.None);
         await store.UpsertAsync(
-            new DispatchedTask(Guid.NewGuid(), plan.PlanId, plan.GoalId, "Already running", [], [], 1, TaskLifecycleState.Running, SchedulingMode.Immediate, null, DateTimeOffset.UtcNow, false),
+            new DispatchedTask(Guid.NewGuid(), plan.PlanId, plan.GoalId, "Already running", [], [], 1, TaskLifecycleState.Running, SchedulingMode.Immediate, null, DateTimeOffset.UtcNow, false, 0, null),
             CancellationToken.None);
 
         var selected = await scheduler.SelectNextDispatchableTaskAsync(CancellationToken.None);
@@ -283,12 +284,12 @@ public class SchedulerTests
         var store = await CreateStoreAsync();
         var planTask = NewPlanTask();
         var plan = NewPlan(planTask);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 4, dailyCapacity: 1);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 4, dailyCapacity: 1);
         scheduler.OnTaskCreated(planTask.TaskId, priority: 1);
         await scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None);
         await scheduler.EvaluateReadinessAsync(CancellationToken.None);
         await store.UpsertAsync(
-            new DispatchedTask(Guid.NewGuid(), plan.PlanId, plan.GoalId, "Already dispatched today", [], [], 1, TaskLifecycleState.Running, SchedulingMode.Immediate, null, DateTimeOffset.UtcNow, false),
+            new DispatchedTask(Guid.NewGuid(), plan.PlanId, plan.GoalId, "Already dispatched today", [], [], 1, TaskLifecycleState.Running, SchedulingMode.Immediate, null, DateTimeOffset.UtcNow, false, 0, null),
             CancellationToken.None);
 
         var selected = await scheduler.SelectNextDispatchableTaskAsync(CancellationToken.None);
@@ -301,10 +302,10 @@ public class SchedulerTests
     {
         var store = await CreateStoreAsync();
         await ClearReadyQueueAsync(store);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var futureTask = new DispatchedTask(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Delayed task", ["logging"], [], 5,
-            TaskLifecycleState.Created, SchedulingMode.Delayed, DateTimeOffset.UtcNow.AddHours(1), null, false);
+            TaskLifecycleState.Created, SchedulingMode.Delayed, DateTimeOffset.UtcNow.AddHours(1), null, false, 0, null);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient((futureTask.GoalId, futureTask.PlanId)), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         await scheduler.ScheduleAsync(futureTask, CancellationToken.None);
         await scheduler.EvaluateReadinessAsync(CancellationToken.None);
@@ -327,10 +328,10 @@ public class SchedulerTests
     {
         var store = await CreateStoreAsync();
         await ClearReadyQueueAsync(store);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var futureOccurrence = new DispatchedTask(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Periodic sweep occurrence", ["logging"], [], 5,
-            TaskLifecycleState.Created, SchedulingMode.Periodic, DateTimeOffset.UtcNow.AddHours(1), null, false);
+            TaskLifecycleState.Created, SchedulingMode.Periodic, DateTimeOffset.UtcNow.AddHours(1), null, false, 0, null);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient((futureOccurrence.GoalId, futureOccurrence.PlanId)), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         await scheduler.ScheduleAsync(futureOccurrence, CancellationToken.None);
         await scheduler.EvaluateReadinessAsync(CancellationToken.None);
@@ -353,10 +354,10 @@ public class SchedulerTests
     {
         var store = await CreateStoreAsync();
         await ClearReadyQueueAsync(store);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var task = new DispatchedTask(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Runs after IncidentDetected", ["ops"], [], 5,
-            TaskLifecycleState.Created, SchedulingMode.EventDriven, null, null, false);
+            TaskLifecycleState.Created, SchedulingMode.EventDriven, null, null, false, 0, null);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient((task.GoalId, task.PlanId)), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         await scheduler.ScheduleAsync(task, CancellationToken.None);
         await scheduler.EvaluateReadinessAsync(CancellationToken.None);
@@ -380,10 +381,10 @@ public class SchedulerTests
     {
         var store = await CreateStoreAsync();
         await ClearReadyQueueAsync(store);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var futureReview = new DispatchedTask(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Quarterly-cycle-aligned review", ["governance"], [], 5,
-            TaskLifecycleState.Created, SchedulingMode.Scheduled, DateTimeOffset.UtcNow.AddHours(1), null, false);
+            TaskLifecycleState.Created, SchedulingMode.Scheduled, DateTimeOffset.UtcNow.AddHours(1), null, false, 0, null);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient((futureReview.GoalId, futureReview.PlanId)), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         await scheduler.ScheduleAsync(futureReview, CancellationToken.None);
         await scheduler.EvaluateReadinessAsync(CancellationToken.None);
@@ -409,10 +410,10 @@ public class SchedulerTests
     {
         var store = await CreateStoreAsync();
         await ClearReadyQueueAsync(store);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var task = new DispatchedTask(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Background maintenance sweep", ["ops"], [], 5,
-            TaskLifecycleState.Created, SchedulingMode.Background, null, null, false);
+            TaskLifecycleState.Created, SchedulingMode.Background, null, null, false, 0, null);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient((task.GoalId, task.PlanId)), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         await scheduler.ScheduleAsync(task, CancellationToken.None);
         var readyNow = await scheduler.EvaluateReadinessAsync(CancellationToken.None);
@@ -433,13 +434,16 @@ public class SchedulerTests
     {
         var store = await CreateStoreAsync();
         await ClearReadyQueueAsync(store);
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var backgroundTask = new DispatchedTask(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Background occurrence", ["ops"], [], 1,
-            TaskLifecycleState.Created, SchedulingMode.Background, null, null, false);
+            TaskLifecycleState.Created, SchedulingMode.Background, null, null, false, 0, null);
         var idleTimeTask = new DispatchedTask(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Idle-time occurrence", ["ops"], [], 1,
-            TaskLifecycleState.Created, SchedulingMode.IdleTime, null, null, false);
+            TaskLifecycleState.Created, SchedulingMode.IdleTime, null, null, false, 0, null);
+        var scheduler = new Scheduler(
+            store, new FixedPlanQueryClient(),
+            new FixedGoalPlanQueryClient((backgroundTask.GoalId, backgroundTask.PlanId), (idleTimeTask.GoalId, idleTimeTask.PlanId)),
+            new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         await scheduler.ScheduleAsync(backgroundTask, CancellationToken.None);
         await scheduler.ScheduleAsync(idleTimeTask, CancellationToken.None);
@@ -453,7 +457,7 @@ public class SchedulerTests
     public async Task MarkEventObserved_Throws_WhenTheTaskDoesNotExist()
     {
         var store = await CreateStoreAsync();
-        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var scheduler = new Scheduler(store, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(), new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => scheduler.MarkEventObserved(Guid.NewGuid(), CancellationToken.None));

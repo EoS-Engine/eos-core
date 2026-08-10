@@ -33,18 +33,25 @@ public sealed class DispatchedTaskStore(string connectionString)
                 RunningAt DATETIMEOFFSET NULL,
                 EventObserved BIT NOT NULL
             )
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('DispatchedTask') AND name = 'RetryCount')
+            ALTER TABLE DispatchedTask ADD RetryCount INT NOT NULL DEFAULT 0
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('DispatchedTask') AND name = 'BlockedReason')
+            ALTER TABLE DispatchedTask ADD BlockedReason NVARCHAR(MAX) NULL
             """;
 
         try
         {
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        catch (SqlException ex) when (ex.Number is 1913 or 2714)
+        catch (SqlException ex) when (ex.Number is 2705 or 1913 or 2714)
         {
-            // Benign race on the non-atomic IF NOT EXISTS guard above, matching
-            // ArchivedContentStore's exact filter (WP-016) and WP-023's corrected filter
-            // (PR #20 round 1): 2705 ("duplicate column name") is deliberately excluded — that
-            // error indicates a malformed CREATE TABLE statement, not a concurrency artifact.
+            // Benign race on the non-atomic IF NOT EXISTS guards above, matching
+            // ArchivedContentStore's exact filter (WP-016), WP-023's corrected filter (PR #20
+            // round 1), and KnowledgeGraphStore's ALTER-TABLE-column-addition precedent (WP-025):
+            // 2705 is a genuine "duplicate column" race on the new ALTER TABLE guards above, not
+            // (as WP-023's own note warned) a malformed CREATE TABLE statement — safe here because
+            // KnowledgeGraphStore already established this exact filter for the identical
+            // ALTER-TABLE-ADD-column class of guard.
         }
     }
 
@@ -72,17 +79,18 @@ public sealed class DispatchedTaskStore(string connectionString)
                     CompetencyRequirementsJson = @CompetencyRequirementsJson,
                     DependsOnTaskIdsJson = @DependsOnTaskIdsJson, Priority = @Priority,
                     State = @State, SchedulingMode = @SchedulingMode, NotBefore = @NotBefore,
-                    RunningAt = @RunningAt, EventObserved = @EventObserved
+                    RunningAt = @RunningAt, EventObserved = @EventObserved,
+                    RetryCount = @RetryCount, BlockedReason = @BlockedReason
                 WHERE TaskId = @TaskId
             ELSE
                 INSERT INTO DispatchedTask (
                     TaskId, PlanId, GoalId, Description, CompetencyRequirementsJson,
                     DependsOnTaskIdsJson, Priority, State, SchedulingMode, NotBefore, RunningAt,
-                    EventObserved)
+                    EventObserved, RetryCount, BlockedReason)
                 VALUES (
                     @TaskId, @PlanId, @GoalId, @Description, @CompetencyRequirementsJson,
                     @DependsOnTaskIdsJson, @Priority, @State, @SchedulingMode, @NotBefore, @RunningAt,
-                    @EventObserved)
+                    @EventObserved, @RetryCount, @BlockedReason)
             """;
         command.Parameters.AddWithValue("@TaskId", task.TaskId);
         command.Parameters.AddWithValue("@PlanId", task.PlanId);
@@ -96,6 +104,8 @@ public sealed class DispatchedTaskStore(string connectionString)
         command.Parameters.AddWithValue("@NotBefore", (object?)task.NotBefore ?? DBNull.Value);
         command.Parameters.AddWithValue("@RunningAt", (object?)task.RunningAt ?? DBNull.Value);
         command.Parameters.AddWithValue("@EventObserved", task.EventObserved);
+        command.Parameters.AddWithValue("@RetryCount", task.RetryCount);
+        command.Parameters.AddWithValue("@BlockedReason", (object?)task.BlockedReason ?? DBNull.Value);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -118,6 +128,16 @@ public sealed class DispatchedTaskStore(string connectionString)
     /// </summary>
     public Task<IReadOnlyList<DispatchedTask>> GetByStateAsync(TaskLifecycleState state, CancellationToken cancellationToken) =>
         QueryAsync($"{SelectColumns} WHERE State = @State", command => command.Parameters.AddWithValue("@State", state.ToString()), cancellationToken);
+
+    /// <summary>
+    /// WP-025.5: every <see cref="DispatchedTask"/> row for a Goal, across every Plan it has ever
+    /// had (current and superseded) — <see cref="ProgressMonitor"/> is responsible for applying
+    /// the current-Plan filter (WP-025 Architecture Board Ruling Q1/Q2) itself; this read is
+    /// deliberately unfiltered, matching every other store method's precedent of no built-in
+    /// business-rule filtering beyond the single column named in the method itself.
+    /// </summary>
+    public Task<IReadOnlyList<DispatchedTask>> GetByGoalIdAsync(Guid goalId, CancellationToken cancellationToken) =>
+        QueryAsync($"{SelectColumns} WHERE GoalId = @GoalId", command => command.Parameters.AddWithValue("@GoalId", goalId), cancellationToken);
 
     /// <summary>
     /// Constitution Part 7 §7.2's Priority Queue — "Ready" tasks ordered by Planner's own
@@ -157,7 +177,7 @@ public sealed class DispatchedTaskStore(string connectionString)
 
     private const string SelectColumns = """
         SELECT TaskId, PlanId, GoalId, Description, CompetencyRequirementsJson, DependsOnTaskIdsJson,
-               Priority, State, SchedulingMode, NotBefore, RunningAt, EventObserved
+               Priority, State, SchedulingMode, NotBefore, RunningAt, EventObserved, RetryCount, BlockedReason
         FROM DispatchedTask
         """;
 
@@ -195,6 +215,8 @@ public sealed class DispatchedTaskStore(string connectionString)
             SchedulingMode: Enum.Parse<SchedulingMode>(reader.GetString(8)),
             NotBefore: reader.IsDBNull(9) ? null : reader.GetDateTimeOffset(9),
             RunningAt: reader.IsDBNull(10) ? null : reader.GetDateTimeOffset(10),
-            EventObserved: reader.GetBoolean(11));
+            EventObserved: reader.GetBoolean(11),
+            RetryCount: reader.GetInt32(12),
+            BlockedReason: reader.IsDBNull(13) ? null : reader.GetString(13));
     }
 }

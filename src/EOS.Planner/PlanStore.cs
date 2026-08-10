@@ -30,18 +30,21 @@ public sealed class PlanStore(string connectionString)
                 EstimatedResourceCost FLOAT NOT NULL,
                 RiskAdjustedConfidenceScore FLOAT NOT NULL
             )
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('PlanArtifact') AND name = 'PreviousPlanId')
+            ALTER TABLE PlanArtifact ADD PreviousPlanId UNIQUEIDENTIFIER NULL
             """;
 
         try
         {
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        catch (SqlException ex) when (ex.Number is 1913 or 2714)
+        catch (SqlException ex) when (ex.Number is 2705 or 1913 or 2714)
         {
-            // Benign race on the non-atomic IF NOT EXISTS guard above (matching
-            // ArchivedContentStore's exact filter, WP-016). 2705 ("duplicate column name") is
-            // deliberately excluded — that error indicates a malformed CREATE TABLE statement,
-            // not a concurrency artifact, and must not be silently swallowed.
+            // Benign race on the non-atomic IF NOT EXISTS guards above (matching
+            // ArchivedContentStore's exact filter, WP-016, and KnowledgeGraphStore's
+            // ALTER-TABLE-ADD-column precedent, WP-025): 2705 here is a genuine "duplicate
+            // column" race on the new ALTER TABLE guard above, not a malformed CREATE TABLE
+            // statement.
         }
     }
 
@@ -52,14 +55,15 @@ public sealed class PlanStore(string connectionString)
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO PlanArtifact (PlanId, GoalId, TasksJson, EstimatedResourceCost, RiskAdjustedConfidenceScore)
-            VALUES (@PlanId, @GoalId, @TasksJson, @EstimatedResourceCost, @RiskAdjustedConfidenceScore)
+            INSERT INTO PlanArtifact (PlanId, GoalId, TasksJson, EstimatedResourceCost, RiskAdjustedConfidenceScore, PreviousPlanId)
+            VALUES (@PlanId, @GoalId, @TasksJson, @EstimatedResourceCost, @RiskAdjustedConfidenceScore, @PreviousPlanId)
             """;
         command.Parameters.AddWithValue("@PlanId", plan.PlanId);
         command.Parameters.AddWithValue("@GoalId", plan.GoalId);
         command.Parameters.AddWithValue("@TasksJson", JsonSerializer.Serialize(plan.Tasks));
         command.Parameters.AddWithValue("@EstimatedResourceCost", plan.EstimatedResourceCost);
         command.Parameters.AddWithValue("@RiskAdjustedConfidenceScore", plan.RiskAdjustedConfidenceScore);
+        command.Parameters.AddWithValue("@PreviousPlanId", (object?)plan.PreviousPlanId ?? DBNull.Value);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -71,7 +75,7 @@ public sealed class PlanStore(string connectionString)
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT PlanId, GoalId, TasksJson, EstimatedResourceCost, RiskAdjustedConfidenceScore
+            SELECT PlanId, GoalId, TasksJson, EstimatedResourceCost, RiskAdjustedConfidenceScore, PreviousPlanId
             FROM PlanArtifact
             WHERE PlanId = @PlanId
             """;
@@ -88,6 +92,7 @@ public sealed class PlanStore(string connectionString)
             GoalId: reader.GetGuid(1),
             Tasks: JsonSerializer.Deserialize<PlanTask[]>(reader.GetString(2)) ?? [],
             EstimatedResourceCost: reader.GetDouble(3),
-            RiskAdjustedConfidenceScore: reader.GetDouble(4));
+            RiskAdjustedConfidenceScore: reader.GetDouble(4),
+            PreviousPlanId: reader.IsDBNull(5) ? null : reader.GetGuid(5));
     }
 }

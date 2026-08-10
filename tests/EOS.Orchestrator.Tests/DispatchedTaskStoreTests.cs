@@ -18,7 +18,9 @@ public class DispatchedTaskStoreTests
         SchedulingMode schedulingMode = SchedulingMode.Immediate,
         DateTimeOffset? notBefore = null,
         DateTimeOffset? runningAt = null,
-        bool eventObserved = false) => new(
+        bool eventObserved = false,
+        int retryCount = 0,
+        string? blockedReason = null) => new(
         TaskId: Guid.NewGuid(),
         PlanId: Guid.NewGuid(),
         GoalId: Guid.NewGuid(),
@@ -30,14 +32,16 @@ public class DispatchedTaskStoreTests
         SchedulingMode: schedulingMode,
         NotBefore: notBefore,
         RunningAt: runningAt,
-        EventObserved: eventObserved);
+        EventObserved: eventObserved,
+        RetryCount: retryCount,
+        BlockedReason: blockedReason);
 
     [Fact]
     public async Task UpsertAsync_ThenGetByIdAsync_RoundTripsEveryField()
     {
         var store = await CreateStoreAsync();
         var dependsOn = new[] { Guid.NewGuid(), Guid.NewGuid() };
-        var task = NewTask(state: TaskLifecycleState.Planned, priority: 7, dependsOnTaskIds: dependsOn, schedulingMode: SchedulingMode.Delayed, notBefore: DateTimeOffset.UtcNow.AddHours(1), eventObserved: true);
+        var task = NewTask(state: TaskLifecycleState.Planned, priority: 7, dependsOnTaskIds: dependsOn, schedulingMode: SchedulingMode.Delayed, notBefore: DateTimeOffset.UtcNow.AddHours(1), eventObserved: true, retryCount: 2, blockedReason: "Gate failure: coverage below threshold");
 
         await store.UpsertAsync(task, CancellationToken.None);
         var persisted = await store.GetByIdAsync(task.TaskId, CancellationToken.None);
@@ -59,6 +63,8 @@ public class DispatchedTaskStoreTests
         Assert.Equal(task.NotBefore, persisted.NotBefore);
         Assert.Equal(task.RunningAt, persisted.RunningAt);
         Assert.Equal(task.EventObserved, persisted.EventObserved);
+        Assert.Equal(task.RetryCount, persisted.RetryCount);
+        Assert.Equal(task.BlockedReason, persisted.BlockedReason);
     }
 
     [Fact]

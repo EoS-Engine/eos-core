@@ -17,6 +17,7 @@ namespace EOS.Orchestrator;
 public sealed class Scheduler(
     DispatchedTaskStore store,
     IPlanQueryClient planQueryClient,
+    IGoalPlanQueryClient goalPlanQueryClient,
     IResourceManagementClient resourceManagementClient,
     int concurrencyCeiling,
     int dailyCapacity)
@@ -114,7 +115,9 @@ public sealed class Scheduler(
                     SchedulingMode: SchedulingMode.Immediate,
                     NotBefore: null,
                     RunningAt: null,
-                    EventObserved: false);
+                    EventObserved: false,
+                    RetryCount: 0,
+                    BlockedReason: null);
 
                 await store.UpsertAsync(dispatchedTask, cancellationToken);
                 materializedTaskIds.Add(dispatchedTask.TaskId);
@@ -175,7 +178,11 @@ public sealed class Scheduler(
     /// repeatable check, not a one-time gate); this transition's own "Gates: Dependency graph
     /// satisfied" is the one condition checked here, per §13.3: a Task becomes Ready only when
     /// every dependency has reached <see cref="TaskLifecycleState.Verified"/> or
-    /// <see cref="TaskLifecycleState.Released"/>.
+    /// <see cref="TaskLifecycleState.Released"/>. WP-025.4 adds the current-Plan check
+    /// (<see cref="IsCurrentPlanAsync"/>) as a second, additive gate on this same transition — an
+    /// old-Plan Task is left exactly as-is in <see cref="TaskLifecycleState.Planned"/>, never
+    /// promoted to Ready, since promoting it would itself be a mutation the WP-025 Architecture
+    /// Board's Q2 ruling forbids ("old Planned/Ready tasks remain persisted and unchanged").
     /// </summary>
     public async Task<IReadOnlyList<DispatchedTask>> EvaluateReadinessAsync(CancellationToken cancellationToken)
     {
@@ -185,6 +192,11 @@ public sealed class Scheduler(
         foreach (var task in planned)
         {
             if (!await AreDependenciesSatisfiedAsync(task, cancellationToken))
+            {
+                continue;
+            }
+
+            if (!await IsCurrentPlanAsync(task, cancellationToken))
             {
                 continue;
             }
@@ -243,13 +255,37 @@ public sealed class Scheduler(
 
         foreach (var task in readyTasks)
         {
-            if (IsEligibleForItsSchedulingMode(task))
+            if (!IsEligibleForItsSchedulingMode(task))
             {
-                return task;
+                continue;
             }
+
+            if (!await IsCurrentPlanAsync(task, cancellationToken))
+            {
+                continue;
+            }
+
+            return task;
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// WP-025 Architecture Board Ruling Q1/Q2 (frozen): a Task is dispatchable only when
+    /// <c>DispatchedTask.PlanId == Goal.PlanId</c> — <see cref="Plan"/>s are immutable/versioned
+    /// (Dynamic Replanning creates a new Plan artifact, never mutates the old one), and the Goal's
+    /// <c>PlanId</c> pointer is the sole current-Plan indicator (no <c>IsSuperseded</c>/
+    /// <c>IsActive</c>/<c>PlanStatus</c> field, no new lifecycle state). An old-Plan Task is left
+    /// persisted exactly as-is — this check only ever affects *selection*, never mutates the Task
+    /// or cancels it. A missing Goal/unset <c>Goal.PlanId</c> is treated identically to "not the
+    /// current Plan" (not dispatchable) rather than fabricating an eligible fallback — genuine
+    /// query failures/cancellation are not caught here and propagate to the caller unmodified.
+    /// </summary>
+    private async Task<bool> IsCurrentPlanAsync(DispatchedTask task, CancellationToken cancellationToken)
+    {
+        var currentPlanId = await goalPlanQueryClient.GetCurrentPlanIdAsync(task.GoalId, cancellationToken);
+        return currentPlanId is not null && task.PlanId == currentPlanId;
     }
 
     // §7.3 step 3: "Check Resource Budget headroom (CPU/RAM/Inference)." IResourceManagementClient

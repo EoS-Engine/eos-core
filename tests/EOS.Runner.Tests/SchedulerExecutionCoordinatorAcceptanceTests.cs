@@ -160,13 +160,14 @@ public class SchedulerExecutionCoordinatorAcceptanceTests
         // Running rows across every prior run of this suite and of EOS.Orchestrator.Tests (same
         // physical table); a small ceiling would eventually, spuriously trip on that history.
         var scheduler = new Scheduler(
-            dispatchedTaskStore, new PlanStorePlanQueryClient(planStore), resourceManagementClient,
+            dispatchedTaskStore, new PlanStorePlanQueryClient(planStore), new GoalStoreGoalPlanQueryClient(goalStore), resourceManagementClient,
             concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
 
         var planningEngine = new PlanningEngine(
             goalManager, goalValidator, taskGraphBuilder, dependencyManager, priorityManager, planStore,
             new SchedulerTaskCreatedEventPublisher(scheduler),
-            new SchedulerPlannerGeneratedEventPublisher(scheduler));
+            new SchedulerPlannerGeneratedEventPublisher(scheduler),
+            new NoOpReplanTriggeredEventPublisher());
 
         var taskStartedPublisher = new RecordingTaskStartedEventPublisher();
         var executionCoordinator = new ExecutionCoordinator(
@@ -213,6 +214,15 @@ public class SchedulerExecutionCoordinatorAcceptanceTests
             planStore.GetByIdAsync(planId, cancellationToken);
     }
 
+    // WP-025.4: Composition Root Adapter Pattern (ADR-015-001) — mirrors PlanStorePlanQueryClient
+    // above, bridging to EOS.Planner's own already-built GoalStore.GetByIdAsync for the Goal's
+    // current PlanId pointer (WP-025 Architecture Board Ruling Q1).
+    private sealed class GoalStoreGoalPlanQueryClient(GoalStore goalStore) : IGoalPlanQueryClient
+    {
+        public async Task<Guid?> GetCurrentPlanIdAsync(Guid goalId, CancellationToken cancellationToken = default) =>
+            (await goalStore.GetByIdAsync(goalId, cancellationToken))?.PlanId;
+    }
+
     private sealed class SchedulerTaskCreatedEventPublisher(Scheduler scheduler) : ITaskCreatedEventPublisher
     {
         public void PublishTaskCreated(Guid taskId, string[] competenciesRequired, int priority) =>
@@ -249,6 +259,13 @@ public class SchedulerExecutionCoordinatorAcceptanceTests
     private sealed class NoOpGoalValidatedEventPublisher : IGoalValidatedEventPublisher
     {
         public void PublishGoalValidated(Guid goalId, bool feasibilityResult)
+        {
+        }
+    }
+
+    private sealed class NoOpReplanTriggeredEventPublisher : IReplanTriggeredEventPublisher
+    {
+        public void PublishReplanTriggered(Guid goalId, string triggerType)
         {
         }
     }
