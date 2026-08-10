@@ -241,6 +241,61 @@ try
 
     var pipelineStageStoreAdapter = new PipelineStageStoreAdapter(pipelineRecordStore);
 
+    // WP-027: Learning Engine — Full Pipeline, ROI Gate & Fitness Functions
+    // (Learning-Engine-Specification-v1.1 §11.3/§11.4/§11.5/§11.6/§16/§21/§22). RoiGate never
+    // returns a promotable decision — no roi_minimum exists anywhere in this repository or any
+    // frozen document (WP-027 Decision 1) — so GoldenPath->Automation can never succeed through
+    // StageEngine today; everything else in the pipeline (Pattern through GoldenPath, Quarantine
+    // lifecycle, Fitness Functions, Integrity Checker, Feedback Loop Guard) is real and callable.
+    var transitionRecordStore = new TransitionRecordStore(connectionOptions.SqlServerConnectionString);
+    await transitionRecordStore.EnsureTableExistsAsync(CancellationToken.None);
+
+    var roiGate = new RoiGate();
+    var stageEngine = new StageEngine(
+        pipelineRecordStore,
+        transitionRecordStore,
+        roiGate,
+        new EventMediatorBestPracticeRatifiedEventPublisher(eventMediator),
+        new EventMediatorPrincipleGeneralizedEventPublisher(eventMediator),
+        new EventMediatorGoldenPathCodifiedEventPublisher(eventMediator),
+        new EventMediatorPlatformCapabilityPipelineAdvancedEventPublisher(eventMediator),
+        thresholdsOptions.DomainGeneralizationMinimumCount);
+    _ = stageEngine;
+
+    var automationVisibilityPublisher = new AutomationVisibilityPublisher(knowledgeClient);
+    _ = automationVisibilityPublisher;
+
+    var fitnessMonitor = new FitnessMonitor(new EventMediatorFitnessFunctionViolatedEventPublisher(eventMediator));
+    _ = fitnessMonitor;
+
+    var stallDetector = new StallDetector(pipelineRecordStore, new EventMediatorLessonStalledEventPublisher(eventMediator));
+    _ = stallDetector;
+
+    var integrityChecker = new IntegrityChecker(
+        transitionRecordStore, pipelineRecordStore, new EventMediatorDataIntegrityViolationDetectedEventPublisher(eventMediator));
+    _ = integrityChecker;
+
+    var quarantineClearingService = new QuarantineClearingService(
+        pipelineRecordStore, new EventMediatorLessonQuarantineClearedEventPublisher(eventMediator));
+    _ = quarantineClearingService;
+
+    var feedbackLoopGuard = new FeedbackLoopGuard(
+        new NoSelfReferentialTasksProvenanceQueryClient(), new EventMediatorSelfReferentialOutcomeFlaggedEventPublisher(eventMediator));
+    // This subscription is genuinely live (unlike the components above), but is currently
+    // unreachable in practice: PlatformCapabilityPipelineAdvanced can only fire after
+    // GoldenPath->Automation succeeds, and that transition never succeeds while roi_minimum
+    // remains unspecified (WP-027 Decision 1) — so no automatic promotion to Automation,
+    // ReusableComponent, or PlatformCapability currently occurs anywhere in this codebase.
+    eventMediator.Subscribe<PlatformCapabilityPipelineAdvancedPayload>(
+        envelope =>
+        {
+            var record = pipelineRecordStore.GetByIdAsync(envelope.Payload.RecordId, CancellationToken.None).GetAwaiter().GetResult();
+            if (record is not null)
+            {
+                feedbackLoopGuard.CheckAsync(record, CancellationToken.None).GetAwaiter().GetResult();
+            }
+        });
+
     // Real, independently tested infrastructure with no production caller yet — no WP before
     // this one has a reason to classify a node or add a relationship in the "ask" path.
     var freshnessTypeWeights = knowledgeOptions.FreshnessTypeWeights
@@ -1120,6 +1175,135 @@ internal sealed class EventMediatorLessonQuarantinedEventPublisher(EventMediator
             producer: "EOS.Learning",
             payload: new LessonQuarantinedPayload(recordId, reason)));
     }
+}
+
+// WP-027: Learning-Engine-Specification-v1.1 §15's four remaining v1.0-carried-forward
+// promotion events. No payload shape is specified beyond the event name for any of these — see
+// IBestPracticeRatifiedEventPublisher's own doc comment for why the minimal record-identity
+// shape is used, not an invented richer one.
+internal sealed record BestPracticeRatifiedPayload(Guid RecordId);
+
+internal sealed class EventMediatorBestPracticeRatifiedEventPublisher(EventMediator eventMediator) : IBestPracticeRatifiedEventPublisher
+{
+    public void PublishBestPracticeRatified(Guid recordId)
+    {
+        eventMediator.Publish(EventEnvelope<BestPracticeRatifiedPayload>.Create(
+            eventType: "BestPracticeRatified", version: "v1", producer: "EOS.Learning", payload: new BestPracticeRatifiedPayload(recordId)));
+    }
+}
+
+internal sealed record PrincipleGeneralizedPayload(Guid RecordId);
+
+internal sealed class EventMediatorPrincipleGeneralizedEventPublisher(EventMediator eventMediator) : IPrincipleGeneralizedEventPublisher
+{
+    public void PublishPrincipleGeneralized(Guid recordId)
+    {
+        eventMediator.Publish(EventEnvelope<PrincipleGeneralizedPayload>.Create(
+            eventType: "PrincipleGeneralized", version: "v1", producer: "EOS.Learning", payload: new PrincipleGeneralizedPayload(recordId)));
+    }
+}
+
+internal sealed record GoldenPathCodifiedPayload(Guid RecordId);
+
+internal sealed class EventMediatorGoldenPathCodifiedEventPublisher(EventMediator eventMediator) : IGoldenPathCodifiedEventPublisher
+{
+    public void PublishGoldenPathCodified(Guid recordId)
+    {
+        eventMediator.Publish(EventEnvelope<GoldenPathCodifiedPayload>.Create(
+            eventType: "GoldenPathCodified", version: "v1", producer: "EOS.Learning", payload: new GoldenPathCodifiedPayload(recordId)));
+    }
+}
+
+internal sealed record PlatformCapabilityPipelineAdvancedPayload(Guid RecordId);
+
+internal sealed class EventMediatorPlatformCapabilityPipelineAdvancedEventPublisher(EventMediator eventMediator)
+    : IPlatformCapabilityPipelineAdvancedEventPublisher
+{
+    public void PublishPlatformCapabilityPipelineAdvanced(Guid recordId)
+    {
+        eventMediator.Publish(EventEnvelope<PlatformCapabilityPipelineAdvancedPayload>.Create(
+            eventType: "PlatformCapabilityPipelineAdvanced", version: "v1", producer: "EOS.Learning",
+            payload: new PlatformCapabilityPipelineAdvancedPayload(recordId)));
+    }
+}
+
+internal sealed record LessonStalledPayload(Guid RecordId);
+
+internal sealed class EventMediatorLessonStalledEventPublisher(EventMediator eventMediator) : ILessonStalledEventPublisher
+{
+    public void PublishLessonStalled(Guid recordId)
+    {
+        eventMediator.Publish(EventEnvelope<LessonStalledPayload>.Create(
+            eventType: "LessonStalled", version: "v1", producer: "EOS.Learning", payload: new LessonStalledPayload(recordId)));
+    }
+}
+
+// WP-027: Learning-Engine-Specification-v1.1 §15's four new-in-v1.1 events — payloads frozen
+// exactly as specified in that section's table.
+internal sealed record LessonQuarantineClearedPayload(Guid RecordId, string ClearingRole, string Justification);
+
+internal sealed class EventMediatorLessonQuarantineClearedEventPublisher(EventMediator eventMediator)
+    : ILessonQuarantineClearedEventPublisher
+{
+    public void PublishLessonQuarantineCleared(Guid recordId, string clearingRole, string justification)
+    {
+        eventMediator.Publish(EventEnvelope<LessonQuarantineClearedPayload>.Create(
+            eventType: "LessonQuarantineCleared", version: "v1", producer: "EOS.Learning",
+            payload: new LessonQuarantineClearedPayload(recordId, clearingRole, justification)));
+    }
+}
+
+internal sealed record DataIntegrityViolationDetectedPayload(Guid RecordId, PipelineStage FromStage, PipelineStage ToStage);
+
+internal sealed class EventMediatorDataIntegrityViolationDetectedEventPublisher(EventMediator eventMediator)
+    : IDataIntegrityViolationDetectedEventPublisher
+{
+    public void PublishDataIntegrityViolationDetected(Guid recordId, PipelineStage fromStage, PipelineStage toStage)
+    {
+        eventMediator.Publish(EventEnvelope<DataIntegrityViolationDetectedPayload>.Create(
+            eventType: "DataIntegrityViolationDetected", version: "v1", producer: "EOS.Learning",
+            payload: new DataIntegrityViolationDetectedPayload(recordId, fromStage, toStage)));
+    }
+}
+
+internal sealed record FitnessFunctionViolatedPayload(string FitnessFunctionId, double ObservedValue, double Threshold);
+
+internal sealed class EventMediatorFitnessFunctionViolatedEventPublisher(EventMediator eventMediator)
+    : IFitnessFunctionViolatedEventPublisher
+{
+    public void PublishFitnessFunctionViolated(string fitnessFunctionId, double observedValue, double threshold)
+    {
+        eventMediator.Publish(EventEnvelope<FitnessFunctionViolatedPayload>.Create(
+            eventType: "FitnessFunctionViolated", version: "v1", producer: "EOS.Learning",
+            payload: new FitnessFunctionViolatedPayload(fitnessFunctionId, observedValue, threshold)));
+    }
+}
+
+internal sealed record SelfReferentialOutcomeFlaggedPayload(Guid RecordId, Guid TaskId);
+
+internal sealed class EventMediatorSelfReferentialOutcomeFlaggedEventPublisher(EventMediator eventMediator)
+    : ISelfReferentialOutcomeFlaggedEventPublisher
+{
+    public void PublishSelfReferentialOutcomeFlagged(Guid recordId, Guid taskId)
+    {
+        eventMediator.Publish(EventEnvelope<SelfReferentialOutcomeFlaggedPayload>.Create(
+            eventType: "SelfReferentialOutcomeFlagged", version: "v1", producer: "EOS.Learning",
+            payload: new SelfReferentialOutcomeFlaggedPayload(recordId, taskId)));
+    }
+}
+
+/// <summary>
+/// WP-027 §11.5's <see cref="ITaskProvenanceQueryClient"/>: no production code anywhere in this
+/// repository tracks which tasks were generated from a given pattern, or whether a task's
+/// outcome feeds back into it (<c>DispatchedTask</c> carries no such link) — always reporting
+/// "no self-referential tasks" is the architecturally correct answer today, not a placeholder,
+/// mirroring <c>NotYetPromotedPipelineStageStore</c>'s (WP-016) exact precedent for the same
+/// class of "the real data source does not exist yet" situation.
+/// </summary>
+internal sealed class NoSelfReferentialTasksProvenanceQueryClient : ITaskProvenanceQueryClient
+{
+    public Task<IReadOnlyList<Guid>> GetSelfReferentialTaskIdsAsync(Guid knowledgeGraphRef, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<Guid>>([]);
 }
 
 /// <summary>

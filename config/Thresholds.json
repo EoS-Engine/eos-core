@@ -66,5 +66,6 @@
   "retryTimeoutSeconds": 300,
   "ingestionRateWindowSeconds": 3600,
   "ingestionRateThresholdCount": 100,
-  "clusteringConfidenceMinimum": 0.5
+  "clusteringConfidenceMinimum": 0.5,
+  "domainGeneralizationMinimumCount": 2
 }

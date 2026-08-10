@@ -18,6 +18,12 @@
     <ProjectReference Include="..\..\src\EOS.VectorStore\EOS.VectorStore.csproj" />
     <ProjectReference Include="..\..\src\EOS.Reasoning\EOS.Reasoning.csproj" />
     <ProjectReference Include="..\..\src\EOS.AIProvider\EOS.AIProvider.csproj" />
+    <!-- Test-only: proves WP-027 Decision 2's Planner-visibility acceptance criterion by driving
+         the real, unmodified EOS.Planner.TaskGraphBuilder directly. This is a test project
+         reference, not a production EOS.Learning dependency (EOS.Learning.csproj itself is
+         unchanged) — matches this repository's own convention of test projects referencing more
+         projects than the production code under test requires. -->
+    <ProjectReference Include="..\..\src\EOS.Planner\EOS.Planner.csproj" />
   </ItemGroup>
 
 </Project>
