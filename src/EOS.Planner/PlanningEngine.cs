@@ -17,7 +17,8 @@ public sealed class PlanningEngine(
     PriorityManager priorityManager,
     PlanStore planStore,
     ITaskCreatedEventPublisher taskCreatedEventPublisher,
-    IPlannerGeneratedEventPublisher plannerGeneratedEventPublisher) : IPlanningClient
+    IPlannerGeneratedEventPublisher plannerGeneratedEventPublisher,
+    IReplanTriggeredEventPublisher replanTriggeredEventPublisher) : IPlanningClient
 {
     public async Task<Plan> SubmitGoalAsync(Goal goal, CancellationToken cancellationToken = default)
     {
@@ -76,7 +77,8 @@ public sealed class PlanningEngine(
                 // deterministic heuristic: more decomposed steps imply proportionally less
                 // confidence in the plan as a whole, in the absence of any frozen document
                 // specifying one.
-                RiskAdjustedConfidenceScore: tasks.Length > 0 ? 1.0 / tasks.Length : 0.0);
+                RiskAdjustedConfidenceScore: tasks.Length > 0 ? 1.0 / tasks.Length : 0.0,
+                PreviousPlanId: null);
 
             await planStore.InsertAsync(plan, cancellationToken);
             await goalManager.AttachPlanAsync(decomposing, plan.PlanId, cancellationToken);
@@ -120,4 +122,84 @@ public sealed class PlanningEngine(
 
     public Task CancelGoalAsync(string goalId, string reason, CancellationToken cancellationToken = default) =>
         goalManager.CancelGoalAsync(Guid.Parse(goalId), reason, cancellationToken);
+
+    /// <summary>
+    /// WP-025.7: Planning-Execution-Engine-Specification-v1.0 §16.1 "Replanning After Failures" —
+    /// triggered by a Task permanently <c>Blocked</c> (§13.7, realized by
+    /// <c>EOS.Orchestrator.RetryManager</c>'s WP-025.2 exhaustion path). §16 intro: "produces a
+    /// revised Plan artifact... through the same Planning Engine... always re-validated through
+    /// Protection before resuming (FR-PE8)" — reuses the exact same
+    /// <see cref="GoalValidator.Validate"/> Protection call <see cref="SubmitGoalAsync"/> already
+    /// makes, the exact same decomposition/persistence/attach sequence, and the exact same
+    /// <c>TaskCreated</c>/<c>PlannerGenerated</c> event pipeline the Scheduler (WP-024) already
+    /// subscribes to for materializing a Plan's Tasks — no new mechanism for any of that.
+    ///
+    /// Constitution Part 8 §8.3's immutable-versioning rule is satisfied via
+    /// <see cref="Plan.PreviousPlanId"/> (WP-025.1): the OLD Plan row and every
+    /// <c>DispatchedTask</c> row that referenced it are never read, written, or referenced by
+    /// this method at all — <c>EOS.Planner</c> has no dependency on <c>EOS.Orchestrator</c>'s
+    /// <c>DispatchedTaskStore</c> (Constitution §1.2), so old-Plan Task rows are structurally
+    /// impossible for this method to touch, matching the WP-025 Architecture Board's Q2 ruling
+    /// ("old Planned/Ready tasks remain persisted and unchanged") by construction, not by a
+    /// runtime check.
+    ///
+    /// Deliberately does NOT reuse <see cref="SubmitGoalAsync"/>'s catch-and-cancel-the-Goal
+    /// compensation: that pattern exists to avoid leaving a brand-new Goal stuck in
+    /// <c>Decomposing</c> forever. A Goal being replanned already has a valid, unaffected current
+    /// Plan; cancelling it because a replan *attempt* failed would be a new, unauthorized side
+    /// effect. On any failure here, the exception propagates unmodified and the Goal's existing
+    /// <c>PlanId</c> is left exactly as it was (no write has occurred yet at the point of failure
+    /// in every failure path below).
+    /// </summary>
+    public async Task<Plan> ReplanAfterFailureAsync(Guid goalId, CancellationToken cancellationToken = default)
+    {
+        var goal = await goalManager.GetByIdAsync(goalId, cancellationToken)
+            ?? throw new InvalidOperationException($"Goal '{goalId}' does not exist.");
+
+        // Constitution Part 6 §6.2/§11.6: "Any → Cancelled" is a terminal transition with no
+        // defined path back out — no frozen document anywhere defines Cancelled → Planned or
+        // Completed → Planned as legal. AttachPlanAsync unconditionally writes State = Planned,
+        // so without this guard a Goal already given up on (Cancelled) or already finished
+        // (Completed) would be silently resurrected. Checked before any decomposition,
+        // persistence, or event publication — nothing below this point has executed yet.
+        if (goal.State is GoalLifecycleState.Cancelled or GoalLifecycleState.Completed)
+        {
+            throw new InvalidOperationException(
+                $"Goal '{goalId}' is {goal.State} and cannot be replanned — Constitution Part 6 §6.2 "
+                + "defines no path back out of a terminal Goal state.");
+        }
+
+        var validation = goalValidator.Validate(goal);
+        if (!validation.Feasible)
+        {
+            throw new InvalidOperationException($"Goal '{goalId}' failed re-validation during replanning: {validation.Reason}");
+        }
+
+        var tasks = await taskGraphBuilder.DecomposeAsync(goal, cancellationToken);
+
+        var dependentGoalCount = await dependencyManager.GetDependentGoalCountAsync(goal.GoalId, cancellationToken);
+        var estimatedResourceCost = tasks.Length;
+        var priority = priorityManager.ComputePriority(dependentGoalCount, estimatedResourceCost);
+
+        var revisedPlan = new Plan(
+            PlanId: Guid.NewGuid(),
+            GoalId: goal.GoalId,
+            Tasks: tasks,
+            EstimatedResourceCost: estimatedResourceCost,
+            RiskAdjustedConfidenceScore: tasks.Length > 0 ? 1.0 / tasks.Length : 0.0,
+            PreviousPlanId: goal.PlanId);
+
+        await planStore.InsertAsync(revisedPlan, cancellationToken);
+        await goalManager.AttachPlanAsync(goal, revisedPlan.PlanId, cancellationToken);
+
+        foreach (var task in revisedPlan.Tasks)
+        {
+            taskCreatedEventPublisher.PublishTaskCreated(task.TaskId, task.CompetencyRequirements, priority);
+        }
+
+        plannerGeneratedEventPublisher.PublishPlannerGenerated(revisedPlan.PlanId, revisedPlan.PlanId);
+        replanTriggeredEventPublisher.PublishReplanTriggered(goal.GoalId, "Failure");
+
+        return revisedPlan;
+    }
 }

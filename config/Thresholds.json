@@ -60,5 +60,8 @@
   "modelIdleResidencyTimeoutSeconds": 900,
   "quotaWindowSeconds": 30,
   "schedulerConcurrencyCeilingCount": 4,
-  "schedulerDailyCapacityCount": 200
+  "schedulerDailyCapacityCount": 200,
+  "retryMaxAttemptsCount": 3,
+  "retryBackoffDelaySeconds": 30,
+  "retryTimeoutSeconds": 300
 }

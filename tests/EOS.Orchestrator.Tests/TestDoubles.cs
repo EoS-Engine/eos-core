@@ -20,6 +20,30 @@ internal sealed class FixedPlanQueryClient(params Plan[] plans) : IPlanQueryClie
 }
 
 /// <summary>
+/// Hand-rolled <see cref="IGoalPlanQueryClient"/> stub (this repository uses no mocking
+/// framework) returning a fixed, mutable set of (GoalId -> current PlanId) mappings — mutable
+/// (via <see cref="SetCurrentPlanId"/>) because several existing test fixtures construct the
+/// Scheduler before the Plan/Goal pair under test is known.
+/// </summary>
+internal sealed class FixedGoalPlanQueryClient : IGoalPlanQueryClient
+{
+    private readonly Dictionary<Guid, Guid> _currentPlanIdByGoalId;
+
+    public FixedGoalPlanQueryClient(params (Guid GoalId, Guid PlanId)[] currentPlans) =>
+        _currentPlanIdByGoalId = currentPlans.ToDictionary(mapping => mapping.GoalId, mapping => mapping.PlanId);
+
+    public FixedGoalPlanQueryClient(Plan plan)
+        : this((plan.GoalId, plan.PlanId))
+    {
+    }
+
+    public void SetCurrentPlanId(Guid goalId, Guid planId) => _currentPlanIdByGoalId[goalId] = planId;
+
+    public Task<Guid?> GetCurrentPlanIdAsync(Guid goalId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_currentPlanIdByGoalId.TryGetValue(goalId, out var planId) ? (Guid?)planId : null);
+}
+
+/// <summary>
 /// Hand-rolled <see cref="IResourceManagementClient"/> stub whose tier is configurable per test —
 /// used to exercise <c>Scheduler.SelectNextDispatchableTaskAsync</c>'s Resource Budget headroom
 /// check (§7.3 step 3).
@@ -29,6 +53,29 @@ internal sealed class FixedTierResourceManagementClient(CapacityTier tier) : IRe
     public double GetCurrentBudget(ResourceType resourceType) => 0;
 
     public CapacityTier GetCurrentTier(ResourceType resourceType) => tier;
+
+    public ModelResidencyStatus GetModelResidency(string modelId) => new(modelId, ModelResidencyState.Unloaded, null);
+
+    public void RequestBackgroundSlot(string jobId, ResourceClass resourceClass)
+    {
+    }
+}
+
+/// <summary>
+/// WP-025.6: mirrors <see cref="FixedTierResourceManagementClient"/> exactly, except
+/// <see cref="Tier"/> is settable — mutable via a plain property, matching
+/// <see cref="FixedGoalPlanQueryClient"/>'s own mutable-test-double precedent (WP-025.3/.4).
+/// Used to prove <c>Scheduler.SelectNextDispatchableTaskAsync</c> reads resource state fresh on
+/// every call rather than caching an eligibility result — no production event/callback
+/// mechanism is introduced or implied.
+/// </summary>
+internal sealed class MutableTierResourceManagementClient(CapacityTier tier) : IResourceManagementClient
+{
+    public CapacityTier Tier { get; set; } = tier;
+
+    public double GetCurrentBudget(ResourceType resourceType) => 0;
+
+    public CapacityTier GetCurrentTier(ResourceType resourceType) => Tier;
 
     public ModelResidencyStatus GetModelResidency(string modelId) => new(modelId, ModelResidencyState.Unloaded, null);
 
@@ -75,5 +122,45 @@ internal sealed class StateCapturingTaskStartedEventPublisher(DispatchedTaskStor
     public List<TaskLifecycleState> ObservedStatesAtPublishTime { get; } = [];
 
     public void PublishTaskStarted(Guid taskId) =>
+        ObservedStatesAtPublishTime.Add(store.GetByIdAsync(taskId, CancellationToken.None).GetAwaiter().GetResult()!.State);
+}
+
+internal sealed class RecordingTaskRetriedEventPublisher : ITaskRetriedEventPublisher
+{
+    public List<(Guid TaskId, int AttemptNumber)> Published { get; } = [];
+
+    public void PublishTaskRetried(Guid taskId, int attemptNumber) => Published.Add((taskId, attemptNumber));
+}
+
+/// <summary>
+/// Mirrors <see cref="StateCapturingTaskStartedEventPublisher"/>'s exact precedent — proves
+/// <c>TaskRetried</c> is published strictly after the retry transition's persistence write, not
+/// before or concurrently with it.
+/// </summary>
+internal sealed class StateCapturingTaskRetriedEventPublisher(DispatchedTaskStore store) : ITaskRetriedEventPublisher
+{
+    public List<TaskLifecycleState> ObservedStatesAtPublishTime { get; } = [];
+
+    public void PublishTaskRetried(Guid taskId, int attemptNumber) =>
+        ObservedStatesAtPublishTime.Add(store.GetByIdAsync(taskId, CancellationToken.None).GetAwaiter().GetResult()!.State);
+}
+
+internal sealed class RecordingRollbackExecutedEventPublisher : IRollbackExecutedEventPublisher
+{
+    public List<(Guid TaskId, string RollbackPathUsed)> Published { get; } = [];
+
+    public void PublishRollbackExecuted(Guid taskId, string rollbackPathUsed) => Published.Add((taskId, rollbackPathUsed));
+}
+
+/// <summary>
+/// Mirrors <see cref="StateCapturingTaskStartedEventPublisher"/>'s exact precedent — proves
+/// <c>RollbackExecuted</c> is published strictly after the rollback transition's persistence
+/// write, not before or concurrently with it.
+/// </summary>
+internal sealed class StateCapturingRollbackExecutedEventPublisher(DispatchedTaskStore store) : IRollbackExecutedEventPublisher
+{
+    public List<TaskLifecycleState> ObservedStatesAtPublishTime { get; } = [];
+
+    public void PublishRollbackExecuted(Guid taskId, string rollbackPathUsed) =>
         ObservedStatesAtPublishTime.Add(store.GetByIdAsync(taskId, CancellationToken.None).GetAwaiter().GetResult()!.State);
 }

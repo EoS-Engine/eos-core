@@ -15,6 +15,11 @@ namespace EOS.Contracts;
 /// required event via <c>Scheduler.MarkEventObserved</c>, never silently treated as eligible).
 /// <see cref="RunningAt"/> is Constitution Part 7 §7.2's Daily Capacity check input. None of these
 /// are a history/audit trail (ADR-PE002) — only current dispatch state.
+/// <see cref="RetryCount"/> (WP-025) counts attempts against Planning-Execution-Engine-
+/// Specification-v1.0 §13.7's configured <c>max_attempts</c>, additive to this same current-
+/// dispatch-state record rather than a separate history store (ADR-PE002/FR-PE10), mirroring
+/// <see cref="RunningAt"/>'s own precedent. <see cref="BlockedReason"/> is Constitution Part 6
+/// §6.2's "Root-cause note" evidence for the <c>Running → Blocked</c> transition.
 /// </summary>
 public sealed record DispatchedTask(
     Guid TaskId,
@@ -28,4 +33,6 @@ public sealed record DispatchedTask(
     SchedulingMode SchedulingMode,
     DateTimeOffset? NotBefore,
     DateTimeOffset? RunningAt,
-    bool EventObserved);
+    bool EventObserved,
+    int RetryCount,
+    string? BlockedReason);

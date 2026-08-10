@@ -281,7 +281,8 @@ try
         priorityManager,
         planStore,
         new EventMediatorTaskCreatedEventPublisher(eventMediator),
-        new EventMediatorPlannerGeneratedEventPublisher(eventMediator));
+        new EventMediatorPlannerGeneratedEventPublisher(eventMediator),
+        new EventMediatorReplanTriggeredEventPublisher(eventMediator));
     IPlanningClient planningClient = planningEngine;
     _ = planningClient;
 
@@ -294,6 +295,7 @@ try
     var scheduler = new Scheduler(
         dispatchedTaskStore,
         new PlanStorePlanQueryClient(planStore),
+        new GoalStoreGoalPlanQueryClient(goalStore),
         resourceManagementClient,
         thresholdsOptions.SchedulerConcurrencyCeilingCount,
         thresholdsOptions.SchedulerDailyCapacityCount);
@@ -312,6 +314,32 @@ try
     var executionCoordinator = new ExecutionCoordinator(
         scheduler, dispatchedTaskStore, protectionGate, new EventMediatorTaskStartedEventPublisher(eventMediator));
     _ = executionCoordinator;
+
+    // WP-025.2/.3/.5/.7: Retry Manager, Rollback Manager, Progress Monitor, and the failure-
+    // triggered replan request client — real, independently tested infrastructure with no
+    // production caller yet, matching executionCoordinator's own identical precedent immediately
+    // above (no CLI command or execution-cycle loop exists anywhere in this repository to
+    // repeatedly invoke RetryAsync/RollbackAsync/ReplanAfterFailureAsync). Exercised via
+    // RetryManagerTests/RollbackManagerTests/ProgressMonitorTests/PlanningEngineReplanTests and
+    // the end-to-end RetryRollbackReplanAcceptanceTests, which drive them directly against real
+    // infrastructure.
+    var retryManager = new RetryManager(
+        dispatchedTaskStore,
+        protectionGate,
+        new EventMediatorTaskRetriedEventPublisher(eventMediator),
+        thresholdsOptions.RetryMaxAttemptsCount,
+        thresholdsOptions.RetryBackoffDelaySeconds,
+        thresholdsOptions.RetryTimeoutSeconds);
+    _ = retryManager;
+
+    var rollbackManager = new RollbackManager(dispatchedTaskStore, new EventMediatorRollbackExecutedEventPublisher(eventMediator));
+    _ = rollbackManager;
+
+    var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new GoalStoreGoalPlanQueryClient(goalStore));
+    _ = progressMonitor;
+
+    IReplanRequestClient replanRequestClient = new PlanningEngineReplanRequestClient(planningEngine);
+    _ = replanRequestClient;
 
     if (args is ["compress"])
     {
@@ -583,6 +611,23 @@ internal sealed record TaskCompletedPayload(Guid TaskId);
 
 internal sealed record TaskBlockedPayload(Guid TaskId);
 
+// WP-025 Architecture Board Ruling Q4: TaskRetried's payload, frozen to exactly these two fields
+// (task_id, attempt_number) — no "reason" field, since no frozen document establishes evidence
+// text as part of the event's own payload schema (evidence for the Blocked → Retry transition
+// itself is Constitution Part 6 §6.2's "Root-cause note," represented separately as
+// DispatchedTask.BlockedReason, never conflated with this event's contract).
+internal sealed record TaskRetriedPayload(Guid TaskId, int AttemptNumber);
+
+// Planning-Execution-Engine-Specification-v1.0 §20's fully specified RollbackExecuted payload —
+// published by the Rollback Manager only after the corresponding Rollback Path transition has
+// already committed (persist-then-publish, matching TaskStarted's established ordering).
+internal sealed record RollbackExecutedPayload(Guid TaskId, string RollbackPathUsed);
+
+// Planning-Execution-Engine-Specification-v1.0 §20's fully specified ReplanTriggered payload —
+// published by the Planning Engine only after the new Plan artifact and the Goal's moved PlanId
+// have both already committed.
+internal sealed record ReplanTriggeredPayload(Guid GoalId, string TriggerType);
+
 // AI-Provider-Layer-Specification-v1.0 §19's InferenceRouted/InferenceCompleted — only the
 // model identifier is needed here. AIProviderManager.cs currently logs these as messages, not
 // real published EventEnvelope-based events — this subscription is structurally ready, awaiting
@@ -795,6 +840,44 @@ internal sealed class PlanStorePlanQueryClient(PlanStore planStore) : IPlanQuery
         planStore.GetByIdAsync(planId, cancellationToken);
 }
 
+// WP-025.7: Constitution Part 3's ReplanTriggered event (Planning-Execution-Engine-Specification
+// -v1.0 §20, fully specified: goal_id, trigger_type), reused verbatim, per the Composition Root
+// Adapter Pattern (ADR-015-001) — mirrors EventMediatorPlannerGeneratedEventPublisher's exact
+// precedent.
+internal sealed class EventMediatorReplanTriggeredEventPublisher(EventMediator eventMediator) : IReplanTriggeredEventPublisher
+{
+    public void PublishReplanTriggered(Guid goalId, string triggerType)
+    {
+        eventMediator.Publish(EventEnvelope<ReplanTriggeredPayload>.Create(
+            eventType: "ReplanTriggered",
+            version: "v1",
+            producer: "EOS.Planner",
+            payload: new ReplanTriggeredPayload(goalId, triggerType)));
+    }
+}
+
+// WP-025.7: Composition Root Adapter Pattern (ADR-015-001) — EOS.Orchestrator may not reference
+// EOS.Planner directly (Constitution Part 1 §1.2), so it declares IReplanRequestClient for the
+// one call it needs (§16.1 failure-triggered replanning); this adapter bridges it to
+// EOS.Planner's own already-built PlanningEngine.ReplanAfterFailureAsync — no new persistence, no
+// duplicate Planning Engine logic (ADR-PE001).
+internal sealed class PlanningEngineReplanRequestClient(PlanningEngine planningEngine) : IReplanRequestClient
+{
+    public Task<Plan> RequestReplanAfterFailureAsync(Guid goalId, CancellationToken cancellationToken = default) =>
+        planningEngine.ReplanAfterFailureAsync(goalId, cancellationToken);
+}
+
+// WP-025.4: Composition Root Adapter Pattern (ADR-015-001) — EOS.Orchestrator may not reference
+// EOS.Planner directly (Constitution Part 1 §1.2), so it declares IGoalPlanQueryClient for the
+// one read Scheduler needs (the Goal's current PlanId pointer, WP-025 Architecture Board Ruling
+// Q1); this adapter bridges it to EOS.Planner's own already-built GoalStore.GetByIdAsync — no new
+// persistence, no duplicate store (ADR-PE002/FR-PE10).
+internal sealed class GoalStoreGoalPlanQueryClient(GoalStore goalStore) : IGoalPlanQueryClient
+{
+    public async Task<Guid?> GetCurrentPlanIdAsync(Guid goalId, CancellationToken cancellationToken = default) =>
+        (await goalStore.GetByIdAsync(goalId, cancellationToken))?.PlanId;
+}
+
 // WP-024: TaskStarted's first real producer — reuses the exact pre-existing TaskStartedPayload
 // record above (§20: "Existing events... reused verbatim, never redefined"), which WP-021/022's
 // ResourceMonitor already subscribes to.
@@ -807,6 +890,36 @@ internal sealed class EventMediatorTaskStartedEventPublisher(EventMediator event
             version: "v1",
             producer: "EOS.Orchestrator",
             payload: new TaskStartedPayload(taskId)));
+    }
+}
+
+// WP-025.8: Constitution Part 3's TaskRetried event, reused verbatim (Planning-Execution-Engine-
+// Specification-v1.0 §20; producer: Retry Manager, §10.9), per the Composition Root Adapter
+// Pattern (ADR-015-001). Payload frozen by WP-025 Architecture Board Ruling Q4.
+internal sealed class EventMediatorTaskRetriedEventPublisher(EventMediator eventMediator) : ITaskRetriedEventPublisher
+{
+    public void PublishTaskRetried(Guid taskId, int attemptNumber)
+    {
+        eventMediator.Publish(EventEnvelope<TaskRetriedPayload>.Create(
+            eventType: "TaskRetried",
+            version: "v1",
+            producer: "EOS.Orchestrator",
+            payload: new TaskRetriedPayload(taskId, attemptNumber)));
+    }
+}
+
+// WP-025.8: Planning-Execution-Engine-Specification-v1.0 §20's fully specified RollbackExecuted
+// event (producer: Rollback Manager, §10.10), per the Composition Root Adapter Pattern
+// (ADR-015-001).
+internal sealed class EventMediatorRollbackExecutedEventPublisher(EventMediator eventMediator) : IRollbackExecutedEventPublisher
+{
+    public void PublishRollbackExecuted(Guid taskId, string rollbackPathUsed)
+    {
+        eventMediator.Publish(EventEnvelope<RollbackExecutedPayload>.Create(
+            eventType: "RollbackExecuted",
+            version: "v1",
+            producer: "EOS.Orchestrator",
+            payload: new RollbackExecutedPayload(taskId, rollbackPathUsed)));
     }
 }
 

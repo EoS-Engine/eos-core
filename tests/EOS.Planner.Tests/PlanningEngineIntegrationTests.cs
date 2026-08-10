@@ -51,7 +51,7 @@ public class PlanningEngineIntegrationTests
         var priorityManager = new PriorityManager();
         var planningEngine = new PlanningEngine(
             goalManager, goalValidator, taskGraphBuilder, dependencyManager, priorityManager, planStore,
-            new NoOpTaskCreatedEventPublisher(), new NoOpPlannerGeneratedEventPublisher());
+            new NoOpTaskCreatedEventPublisher(), new NoOpPlannerGeneratedEventPublisher(), new NoOpReplanTriggeredEventPublisher());
 
         var goal = new Goal(
             GoalId: Guid.NewGuid(),
@@ -123,7 +123,7 @@ public class PlanningEngineIntegrationTests
         var recordingPublisher = new GoalStateAtPublishRecordingEventPublisher(goalStore);
         var planningEngine = new PlanningEngine(
             goalManager, goalValidator, taskGraphBuilder, dependencyManager, priorityManager, planStore,
-            recordingPublisher, new NoOpPlannerGeneratedEventPublisher());
+            recordingPublisher, new NoOpPlannerGeneratedEventPublisher(), new NoOpReplanTriggeredEventPublisher());
 
         var goal = new Goal(
             GoalId: Guid.NewGuid(),
@@ -161,7 +161,7 @@ public class PlanningEngineIntegrationTests
         var priorityManager = new PriorityManager();
         var planningEngine = new PlanningEngine(
             goalManager, goalValidator, taskGraphBuilder, dependencyManager, priorityManager, planStore,
-            new NoOpTaskCreatedEventPublisher(), new NoOpPlannerGeneratedEventPublisher());
+            new NoOpTaskCreatedEventPublisher(), new NoOpPlannerGeneratedEventPublisher(), new NoOpReplanTriggeredEventPublisher());
 
         var goal = new Goal(
             GoalId: Guid.NewGuid(),
@@ -215,7 +215,7 @@ public class PlanningEngineIntegrationTests
         var priorityManager = new PriorityManager();
         var planningEngine = new PlanningEngine(
             goalManager, goalValidator, taskGraphBuilder, dependencyManager, priorityManager, planStore,
-            new NoOpTaskCreatedEventPublisher(), new NoOpPlannerGeneratedEventPublisher());
+            new NoOpTaskCreatedEventPublisher(), new NoOpPlannerGeneratedEventPublisher(), new NoOpReplanTriggeredEventPublisher());
 
         var goal = new Goal(
             GoalId: Guid.NewGuid(),

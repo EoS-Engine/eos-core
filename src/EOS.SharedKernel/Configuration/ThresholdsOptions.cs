@@ -243,4 +243,24 @@ public sealed record ThresholdsOptions
 
     [Range(1, int.MaxValue)]
     public required int SchedulerDailyCapacityCount { get; init; }
+
+    // Planning-Execution-Engine-Specification-v1.0 §13.7's Retry Rule ({max_attempts,
+    // backoff_strategy, escalation_action}), configured per Task type/Domain per that section's
+    // own text. No per-Task-type/Domain partitioning data exists on DispatchedTask (same
+    // disclosed simplification as SchedulerConcurrencyCeilingCount's "one global ceiling," WP-024)
+    // — one global Retry Rule, not a fabricated per-type/domain model. backoff_strategy's concrete
+    // shape is not defined by any frozen document; RetryBackoffDelaySeconds represents the
+    // minimal, disclosed fixed-delay interpretation. No escalation_action field is added:
+    // Constitution Part 6 §6.2's own transition table already fully defines retry-exhaustion
+    // behavior (permanently Blocked) — nothing beyond that is required by any frozen document.
+    [Range(1, int.MaxValue)]
+    public required int RetryMaxAttemptsCount { get; init; }
+
+    [Range(0, int.MaxValue)]
+    public required int RetryBackoffDelaySeconds { get; init; }
+
+    // §13.8: "the same Retry Rule evaluation trigger, not a separate mechanism" — the duration a
+    // Task may remain Running before being evaluated for retry as if it had reached Blocked.
+    [Range(1, int.MaxValue)]
+    public required int RetryTimeoutSeconds { get; init; }
 }
