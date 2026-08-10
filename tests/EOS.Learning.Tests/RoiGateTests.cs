@@ -86,4 +86,50 @@ public class RoiGateTests
         Assert.NotNull(result.Score);
         Assert.Equal(0.0, result.Score.Value, precision: 10);
     }
+
+    [Fact]
+    public void Evaluate_Denies_WhenInputIsNull()
+    {
+        // CodeRabbit R1 finding #6: a null input must fail closed, not throw a raw NullReferenceException.
+        var gate = new RoiGate();
+
+        var result = gate.Evaluate(null);
+
+        Assert.Equal(RoiGateDecision.Denied, result.Decision);
+        Assert.Null(result.Score);
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 10.0, 100.0)]
+    [InlineData(50.0, double.NaN, 100.0)]
+    [InlineData(50.0, 10.0, double.NaN)]
+    public void Evaluate_Denies_WhenAnyInputIsNaN(double? manualCostSaved, double? invocationFrequency, double? buildCost)
+    {
+        // CodeRabbit R1 finding #6: NaN comparisons are always false, so `< 0` alone let NaN through.
+        var gate = new RoiGate();
+
+        var result = gate.Evaluate(new RoiEvaluationInput(manualCostSaved, invocationFrequency, buildCost));
+
+        Assert.Equal(RoiGateDecision.Denied, result.Decision);
+        Assert.Null(result.Score);
+    }
+
+    [Theory]
+    [InlineData(double.PositiveInfinity, 10.0, 100.0)]
+    [InlineData(50.0, double.PositiveInfinity, 100.0)]
+    [InlineData(50.0, 10.0, double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity, 10.0, 100.0)]
+    [InlineData(50.0, double.NegativeInfinity, 100.0)]
+    [InlineData(50.0, 10.0, double.NegativeInfinity)]
+    public void Evaluate_Denies_WhenAnyInputIsInfinite(double? manualCostSaved, double? invocationFrequency, double? buildCost)
+    {
+        // CodeRabbit R1 finding #6: +Infinity previously passed the `< 0` check outright, and
+        // -Infinity is rejected here for the same non-finite reason (also caught by `< 0`).
+        var gate = new RoiGate();
+
+        var result = gate.Evaluate(new RoiEvaluationInput(manualCostSaved, invocationFrequency, buildCost));
+
+        Assert.Equal(RoiGateDecision.Denied, result.Decision);
+        Assert.Null(result.Score);
+    }
 }

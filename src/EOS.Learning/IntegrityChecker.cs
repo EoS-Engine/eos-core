@@ -36,15 +36,18 @@ public sealed class IntegrityChecker(
             }
 
             violationCount++;
-            dataIntegrityViolationDetectedEventPublisher.PublishDataIntegrityViolationDetected(
-                transition.RecordId, transition.FromStage, transition.ToStage);
 
+            // Persist-then-publish (CodeRabbit R1 finding #4): quarantine before publishing the
+            // violation event, so a publish failure can never leave the record un-quarantined.
             var record = await pipelineRecordStore.GetByIdAsync(transition.RecordId, cancellationToken);
             if (record is not null)
             {
                 await pipelineRecordStore.UpdateStageAsync(
                     record.RecordId, record.Stage, PipelineRecordStatus.Quarantined, record.ConfidenceScore, cancellationToken);
             }
+
+            dataIntegrityViolationDetectedEventPublisher.PublishDataIntegrityViolationDetected(
+                transition.RecordId, transition.FromStage, transition.ToStage);
         }
 
         return violationCount;

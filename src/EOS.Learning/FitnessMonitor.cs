@@ -54,7 +54,16 @@ public sealed class FitnessMonitor(IFitnessFunctionViolatedEventPublisher fitnes
     /// <summary>LF-6: Automation ROI realized vs. ROIEvaluation.score projected, deviation | &lt; 25% average deviation.</summary>
     public FitnessCheckResult EvaluateRoiDeviation(double projectedScore, double realizedScore)
     {
-        var observed = projectedScore == 0.0 ? 0.0 : Math.Abs(realizedScore - projectedScore) / Math.Abs(projectedScore) * 100.0;
+        // A zero projected score has no percentage baseline to divide by: zero realized alongside
+        // it is a true zero deviation, but any non-zero realized score is an unbounded (infinite)
+        // deviation from a zero baseline — CodeRabbit R1 finding #1, previously misreported as 0%.
+        if (projectedScore == 0.0)
+        {
+            var zeroBaselineObserved = realizedScore == 0.0 ? 0.0 : double.PositiveInfinity;
+            return Evaluate("LF-6", zeroBaselineObserved, threshold: 25.0, violated: realizedScore != 0.0);
+        }
+
+        var observed = Math.Abs(realizedScore - projectedScore) / Math.Abs(projectedScore) * 100.0;
         return Evaluate("LF-6", observed, threshold: 25.0, violated: observed >= 25.0);
     }
 

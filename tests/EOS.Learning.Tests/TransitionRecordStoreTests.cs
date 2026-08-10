@@ -66,6 +66,33 @@ public class TransitionRecordStoreTests
     }
 
     [Fact]
+    public async Task GetByRecordIdAsync_ReturnsTransitionsInDeterministicOccurredAtOrder()
+    {
+        // CodeRabbit R1 finding #12: no ORDER BY previously meant arbitrary row order.
+        var store = await CreateStoreAsync();
+        var recordId = Guid.NewGuid();
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var later = DateTimeOffset.UtcNow;
+
+        var laterTransition = new TransitionRecord(
+            Guid.NewGuid(), recordId, PipelineStage.Principle, PipelineStage.GoldenPath, "StageEngine",
+            [], IntegrityHashCalculator.Compute(recordId, PipelineStage.Principle, PipelineStage.GoldenPath, "StageEngine", [], later), later);
+        var earlierTransition = new TransitionRecord(
+            Guid.NewGuid(), recordId, PipelineStage.Pattern, PipelineStage.BestPractice, "PrincipalEngineer",
+            [], IntegrityHashCalculator.Compute(recordId, PipelineStage.Pattern, PipelineStage.BestPractice, "PrincipalEngineer", [], earlier), earlier);
+
+        // Inserted out of chronological order deliberately.
+        await store.InsertAsync(laterTransition, CancellationToken.None);
+        await store.InsertAsync(earlierTransition, CancellationToken.None);
+
+        var persisted = await store.GetByRecordIdAsync(recordId, CancellationToken.None);
+
+        Assert.Equal(2, persisted.Count);
+        Assert.Equal(earlierTransition.TransitionId, persisted[0].TransitionId);
+        Assert.Equal(laterTransition.TransitionId, persisted[1].TransitionId);
+    }
+
+    [Fact]
     public async Task InsertAsync_PersistsTheExactStoredHash_ForVerificationLater()
     {
         var store = await CreateStoreAsync();

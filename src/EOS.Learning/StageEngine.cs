@@ -65,7 +65,13 @@ public sealed class StageEngine(
             return NoOp(PipelineStage.Principle);
         }
 
-        var domainCount = distinctDomains.Distinct(StringComparer.OrdinalIgnoreCase).Count();
+        // CodeRabbit R1 finding #7: trim and drop blanks before counting, so surrounding
+        // whitespace (" backend " vs "backend") or empty entries can't inflate the domain count.
+        var domainCount = distinctDomains
+            .Select(domain => domain.Trim())
+            .Where(domain => domain.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
         if (domainCount < domainGeneralizationMinimumCount)
         {
             return new StagePromotionResult(
@@ -199,8 +205,6 @@ public sealed class StageEngine(
     private async Task PersistTransitionAsync(
         PipelineRecord record, PipelineStage toStage, string triggeredBy, string[] evidenceRefs, CancellationToken cancellationToken)
     {
-        await pipelineRecordStore.UpdateStageAsync(record.RecordId, toStage, record.Status, record.ConfidenceScore, cancellationToken);
-
         var occurredAt = DateTimeOffset.UtcNow;
         var integrityHash = IntegrityHashCalculator.Compute(record.RecordId, record.Stage, toStage, triggeredBy, evidenceRefs, occurredAt);
         var transition = new TransitionRecord(
@@ -213,7 +217,11 @@ public sealed class StageEngine(
             IntegrityHash: integrityHash,
             OccurredAt: occurredAt);
 
+        // CodeRabbit R1 finding #8: persist the immutable TransitionRecord evidence before
+        // finalizing the stage promotion — a failed insert here must never leave the record
+        // promoted with no transition evidence for IntegrityChecker to ever audit.
         await transitionRecordStore.InsertAsync(transition, cancellationToken);
+        await pipelineRecordStore.UpdateStageAsync(record.RecordId, toStage, record.Status, record.ConfidenceScore, cancellationToken);
     }
 
     private static StagePromotionResult NoOp(PipelineStage stage) =>

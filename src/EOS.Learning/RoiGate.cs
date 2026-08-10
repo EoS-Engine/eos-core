@@ -14,21 +14,28 @@ namespace EOS.Learning;
 /// </summary>
 public sealed class RoiGate
 {
-    public RoiGateResult Evaluate(RoiEvaluationInput input)
+    public RoiGateResult Evaluate(RoiEvaluationInput? input)
     {
-        if (input.ManualCostSavedPerInvocation is not { } manualCostSaved || manualCostSaved < 0)
+        // CodeRabbit R1 finding #6: a null input, NaN, or either infinity must fail closed —
+        // `< 0` alone lets NaN (always false in comparisons) and +Infinity silently through.
+        if (input is null)
         {
-            return new RoiGateResult(RoiGateDecision.Denied, Score: null, "ManualCostSavedPerInvocation is missing or negative.");
+            return new RoiGateResult(RoiGateDecision.Denied, Score: null, "RoiEvaluationInput must not be null.");
         }
 
-        if (input.ProjectedInvocationFrequency is not { } invocationFrequency || invocationFrequency < 0)
+        if (input.ManualCostSavedPerInvocation is not { } manualCostSaved || !double.IsFinite(manualCostSaved) || manualCostSaved < 0)
         {
-            return new RoiGateResult(RoiGateDecision.Denied, Score: null, "ProjectedInvocationFrequency is missing or negative.");
+            return new RoiGateResult(RoiGateDecision.Denied, Score: null, "ManualCostSavedPerInvocation is missing, non-finite, or negative.");
         }
 
-        if (input.BuildAndMaintenanceCost is not { } buildAndMaintenanceCost || buildAndMaintenanceCost < 0)
+        if (input.ProjectedInvocationFrequency is not { } invocationFrequency || !double.IsFinite(invocationFrequency) || invocationFrequency < 0)
         {
-            return new RoiGateResult(RoiGateDecision.Denied, Score: null, "BuildAndMaintenanceCost is missing or negative.");
+            return new RoiGateResult(RoiGateDecision.Denied, Score: null, "ProjectedInvocationFrequency is missing, non-finite, or negative.");
+        }
+
+        if (input.BuildAndMaintenanceCost is not { } buildAndMaintenanceCost || !double.IsFinite(buildAndMaintenanceCost) || buildAndMaintenanceCost < 0)
+        {
+            return new RoiGateResult(RoiGateDecision.Denied, Score: null, "BuildAndMaintenanceCost is missing, non-finite, or negative.");
         }
 
         // Constitution §0.16.2: (manual cost saved per invocation) x (projected invocation
@@ -36,6 +43,11 @@ public sealed class RoiGate
         // but WP-027 Decision 1 forbids comparing it to any threshold, since roi_minimum does
         // not exist anywhere in this repository.
         var score = (manualCostSaved * invocationFrequency) - buildAndMaintenanceCost;
+
+        if (!double.IsFinite(score))
+        {
+            return new RoiGateResult(RoiGateDecision.Denied, Score: null, "Computed ROI score is non-finite (arithmetic overflow).");
+        }
 
         return new RoiGateResult(
             RoiGateDecision.ThresholdUnavailable,

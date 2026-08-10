@@ -81,6 +81,28 @@ public class IntegrityCheckerTests
     }
 
     [Fact]
+    public async Task RunAsync_QuarantinesBeforePublishing_SoAPublishFailureCannotLeaveTheRecordActive()
+    {
+        // CodeRabbit R1 finding #4: persist-then-publish — Quarantine must be persisted before
+        // the DataIntegrityViolationDetected publish is even attempted, so a publisher failure
+        // can never leave a violated record un-quarantined.
+        var records = new InMemoryPipelineRecordStore();
+        var transitions = new InMemoryTransitionRecordStore();
+        var record = TestRecords.Lesson(stage: PipelineStage.BestPractice);
+        await records.InsertAsync(record, CancellationToken.None);
+        var occurredAt = DateTimeOffset.UtcNow;
+        var transition = new TransitionRecord(
+            Guid.NewGuid(), record.RecordId, PipelineStage.Pattern, PipelineStage.BestPractice, "PrincipalEngineer",
+            ["adr-1"], "deliberately-wrong-hash", occurredAt);
+        await transitions.InsertAsync(transition, CancellationToken.None);
+        var checker = new IntegrityChecker(transitions, records, new ThrowingDataIntegrityViolationDetectedEventPublisher());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => checker.RunAsync(CancellationToken.None));
+
+        Assert.Equal(PipelineRecordStatus.Quarantined, records.Find(record.RecordId)!.Status);
+    }
+
+    [Fact]
     public async Task RunAsync_NeverSilentlyRepairsTheStoredHash()
     {
         var records = new InMemoryPipelineRecordStore();

@@ -91,10 +91,13 @@ public sealed class TransitionRecordStore(string connectionString) : ITransition
         await connection.OpenAsync(cancellationToken);
 
         await using var command = connection.CreateCommand();
+        // CodeRabbit R1 finding #12: SQL gives no row-order guarantee without ORDER BY —
+        // order deterministically by occurrence, with TransitionId as a stable tie-breaker.
         command.CommandText = $"""
             SELECT TransitionId, RecordId, FromStage, ToStage, TriggeredBy, EvidenceRefsJson, IntegrityHash, OccurredAt
             FROM TransitionRecord
             {whereClause}
+            ORDER BY OccurredAt, TransitionId
             """;
         bindParameters?.Invoke(command);
 

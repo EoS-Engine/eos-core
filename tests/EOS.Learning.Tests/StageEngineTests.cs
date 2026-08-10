@@ -135,6 +135,65 @@ public class StageEngineTests
     }
 
     [Fact]
+    public async Task PromoteToPrincipleAsync_TrimsSurroundingWhitespace_BeforeCountingDistinctDomains()
+    {
+        // CodeRabbit R1 finding #7: "backend" and " backend " must count as the same domain.
+        var (engine, records, _, _, _, _, _) = CreateEngine();
+        var record = TestRecords.Lesson(stage: PipelineStage.BestPractice);
+        await records.InsertAsync(record, CancellationToken.None);
+
+        var result = await engine.PromoteToPrincipleAsync(record.RecordId, ["backend", " backend "], CancellationToken.None);
+
+        Assert.False(result.Promoted);
+    }
+
+    [Fact]
+    public async Task PromoteToPrincipleAsync_IgnoresBlankAndWhitespaceOnlyEntries()
+    {
+        // CodeRabbit R1 finding #7: blank/whitespace-only entries must not count as real domains.
+        var (engine, records, _, _, _, _, _) = CreateEngine();
+        var record = TestRecords.Lesson(stage: PipelineStage.BestPractice);
+        await records.InsertAsync(record, CancellationToken.None);
+
+        var result = await engine.PromoteToPrincipleAsync(record.RecordId, ["backend", "", "   "], CancellationToken.None);
+
+        Assert.False(result.Promoted);
+    }
+
+    [Fact]
+    public async Task PromoteToPrincipleAsync_Promotes_WithLegitimateDistinctDomains_AfterTrimming()
+    {
+        var (engine, records, _, _, principleGeneralized, _, _) = CreateEngine();
+        var record = TestRecords.Lesson(stage: PipelineStage.BestPractice);
+        await records.InsertAsync(record, CancellationToken.None);
+
+        var result = await engine.PromoteToPrincipleAsync(record.RecordId, [" backend ", "mobile"], CancellationToken.None);
+
+        Assert.True(result.Promoted);
+        Assert.Equal(1, principleGeneralized.CallCount);
+    }
+
+    [Fact]
+    public async Task PromoteToBestPracticeAsync_DoesNotAdvanceTheStage_WhenTransitionRecordPersistenceFails()
+    {
+        // CodeRabbit R1 finding #8: the TransitionRecord must be persisted before the stage
+        // write — a failed insert must never leave the record promoted with no evidence trail.
+        var records = new InMemoryPipelineRecordStore();
+        var throwingTransitions = new ThrowingOnInsertTransitionRecordStore();
+        var engine = new StageEngine(
+            records, throwingTransitions, new RoiGate(), new RecordingBestPracticeRatifiedEventPublisher(),
+            new RecordingPrincipleGeneralizedEventPublisher(), new RecordingGoldenPathCodifiedEventPublisher(),
+            new RecordingPlatformCapabilityPipelineAdvancedEventPublisher(), domainGeneralizationMinimumCount: 2);
+        var record = TestRecords.Lesson(stage: PipelineStage.Pattern);
+        await records.InsertAsync(record, CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => engine.PromoteToBestPracticeAsync(record.RecordId, "ADR-999", "PrincipalEngineer", CancellationToken.None));
+
+        Assert.Equal(PipelineStage.Pattern, records.Find(record.RecordId)!.Stage);
+    }
+
+    [Fact]
     public async Task PromoteToPrincipleAsync_UsesTheConfiguredMinimumDomainCount()
     {
         var (engine, records, _, _, _, _, _) = CreateEngine(domainGeneralizationMinimumCount: 3);

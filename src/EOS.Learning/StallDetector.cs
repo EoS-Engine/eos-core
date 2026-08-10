@@ -19,6 +19,13 @@ public sealed class StallDetector(
 {
     public async Task<int> RunAsync(DateTimeOffset now, TimeSpan stallWindow, CancellationToken cancellationToken = default)
     {
+        // CodeRabbit R1 finding #9: a zero or negative window would treat every Active record as
+        // stalled immediately, regardless of how recently it actually advanced.
+        if (stallWindow <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(stallWindow), stallWindow, "stallWindow must be positive.");
+        }
+
         var activeRecords = await pipelineRecordStore.GetByStatusAsync(PipelineRecordStatus.Active, cancellationToken);
         var stalledCount = 0;
 

@@ -151,6 +151,21 @@ internal sealed class InMemoryTransitionRecordStore : ITransitionRecordStore
     }
 }
 
+/// <summary>CodeRabbit R1 finding #8: proves a failed TransitionRecord insert cannot leave a record promoted.</summary>
+internal sealed class ThrowingOnInsertTransitionRecordStore : ITransitionRecordStore
+{
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task InsertAsync(TransitionRecord record, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Simulated persistence failure.");
+
+    public Task<IReadOnlyList<TransitionRecord>> GetAllAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TransitionRecord>>([]);
+
+    public Task<IReadOnlyList<TransitionRecord>> GetByRecordIdAsync(Guid recordId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TransitionRecord>>([]);
+}
+
 internal sealed class RecordingBestPracticeRatifiedEventPublisher : IBestPracticeRatifiedEventPublisher
 {
     public int CallCount { get; private set; }
@@ -195,6 +210,13 @@ internal sealed class RecordingDataIntegrityViolationDetectedEventPublisher : ID
 {
     public int CallCount { get; private set; }
     public void PublishDataIntegrityViolationDetected(Guid recordId, PipelineStage fromStage, PipelineStage toStage) => CallCount++;
+}
+
+/// <summary>CodeRabbit R1 finding #4: proves Quarantine persistence happens before this publisher is even reached.</summary>
+internal sealed class ThrowingDataIntegrityViolationDetectedEventPublisher : IDataIntegrityViolationDetectedEventPublisher
+{
+    public void PublishDataIntegrityViolationDetected(Guid recordId, PipelineStage fromStage, PipelineStage toStage) =>
+        throw new InvalidOperationException("Simulated publish failure.");
 }
 
 internal sealed class RecordingFitnessFunctionViolatedEventPublisher : IFitnessFunctionViolatedEventPublisher

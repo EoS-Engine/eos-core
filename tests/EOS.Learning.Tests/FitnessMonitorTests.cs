@@ -136,4 +136,31 @@ public class FitnessMonitorTests
         Assert.True(result.Violated);
         Assert.Equal("LF-6", publisher.LastFitnessFunctionId);
     }
+
+    [Fact]
+    public void EvaluateRoiDeviation_DoesNotViolate_WhenProjectedAndRealizedAreBothZero()
+    {
+        // CodeRabbit R1 finding #1: a zero/zero baseline is a genuine zero deviation, not a gap.
+        var monitor = new FitnessMonitor(new RecordingFitnessFunctionViolatedEventPublisher());
+
+        var result = monitor.EvaluateRoiDeviation(projectedScore: 0, realizedScore: 0);
+
+        Assert.False(result.Violated);
+        Assert.Equal(0.0, result.ObservedValue);
+    }
+
+    [Fact]
+    public void EvaluateRoiDeviation_Violates_WhenProjectedIsZeroButRealizedIsNot()
+    {
+        // CodeRabbit R1 finding #1: previously silently reported 0% deviation for this case —
+        // projectedScore: 0, realizedScore: 100 must not pass LF-6.
+        var publisher = new RecordingFitnessFunctionViolatedEventPublisher();
+        var monitor = new FitnessMonitor(publisher);
+
+        var result = monitor.EvaluateRoiDeviation(projectedScore: 0, realizedScore: 100);
+
+        Assert.True(result.Violated);
+        Assert.Equal("LF-6", publisher.LastFitnessFunctionId);
+        Assert.Equal(double.PositiveInfinity, result.ObservedValue);
+    }
 }

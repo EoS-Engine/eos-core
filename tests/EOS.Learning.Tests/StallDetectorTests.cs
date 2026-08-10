@@ -52,6 +52,32 @@ public class StallDetectorTests
         Assert.Equal(PipelineRecordStatus.Quarantined, records.Find(quarantined.RecordId)!.Status);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task RunAsync_Throws_WhenStallWindowIsNotPositive(int stallWindowSeconds)
+    {
+        // CodeRabbit R1 finding #9: a zero or negative window must not stall every Active record.
+        var records = new InMemoryPipelineRecordStore();
+        var detector = new StallDetector(records, new RecordingLessonStalledEventPublisher());
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => detector.RunAsync(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(stallWindowSeconds), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task RunAsync_Succeeds_WhenStallWindowIsPositive()
+    {
+        var records = new InMemoryPipelineRecordStore();
+        var record = TestRecords.Lesson(stage: PipelineStage.BestPractice, status: PipelineRecordStatus.Active);
+        await records.InsertAsync(record, CancellationToken.None);
+        var detector = new StallDetector(records, new RecordingLessonStalledEventPublisher());
+
+        var stalledCount = await detector.RunAsync(record.CreatedAt.AddDays(1), TimeSpan.FromSeconds(1), CancellationToken.None);
+
+        Assert.Equal(1, stalledCount);
+    }
+
     [Fact]
     public async Task RunAsync_PreservesTheRecordsStage_WhenMarkingStalled()
     {
