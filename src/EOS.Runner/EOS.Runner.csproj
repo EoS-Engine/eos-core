@@ -9,6 +9,7 @@
     <ProjectReference Include="..\EOS.Gates\EOS.Gates.csproj" />
     <ProjectReference Include="..\EOS.Knowledge\EOS.Knowledge.csproj" />
     <ProjectReference Include="..\EOS.KnowledgeGraph\EOS.KnowledgeGraph.csproj" />
+    <ProjectReference Include="..\EOS.Learning\EOS.Learning.csproj" />
     <ProjectReference Include="..\EOS.Orchestrator\EOS.Orchestrator.csproj" />
     <ProjectReference Include="..\EOS.Planner\EOS.Planner.csproj" />
     <ProjectReference Include="..\EOS.Resources\EOS.Resources.csproj" />

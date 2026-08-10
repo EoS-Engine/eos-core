@@ -63,5 +63,8 @@
   "schedulerDailyCapacityCount": 200,
   "retryMaxAttemptsCount": 3,
   "retryBackoffDelaySeconds": 30,
-  "retryTimeoutSeconds": 300
+  "retryTimeoutSeconds": 300,
+  "ingestionRateWindowSeconds": 3600,
+  "ingestionRateThresholdCount": 100,
+  "clusteringConfidenceMinimum": 0.5
 }

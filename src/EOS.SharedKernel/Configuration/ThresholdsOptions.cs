@@ -263,4 +263,19 @@ public sealed record ThresholdsOptions
     // Task may remain Running before being evaluated for retry as if it had reached Blocked.
     [Range(1, int.MaxValue)]
     public required int RetryTimeoutSeconds { get; init; }
+
+    // Learning-Engine-Specification-v1.1 §11.1/§24.1's Ingestion Rate Guard (Knowledge Poisoning
+    // defense) — the wall-clock-anchored window and the per-window event count above which a
+    // producer role's Lessons are routed to Quarantined rather than normal processing (WP-026).
+    [Range(1, int.MaxValue)]
+    public required int IngestionRateWindowSeconds { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public required int IngestionRateThresholdCount { get; init; }
+
+    // §11.2/§37: no numeric value is defined by any frozen document — §37 explicitly calls this
+    // a "design-time estimate... to be recalibrated empirically." Approved value: 0.5 (WP-026
+    // Implementation Authorization).
+    [Range(0.0, 1.0)]
+    public required double ClusteringConfidenceMinimum { get; init; }
 }
