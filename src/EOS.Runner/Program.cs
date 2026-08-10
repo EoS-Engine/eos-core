@@ -323,6 +323,15 @@ try
     // RetryManagerTests/RollbackManagerTests/ProgressMonitorTests/PlanningEngineReplanTests and
     // the end-to-end RetryRollbackReplanAcceptanceTests, which drive them directly against real
     // infrastructure.
+    //
+    // CodeRabbit PR #22 round 1 (correct observation, already-intentional): none of these four
+    // are wired to invoke each other automatically — RetryManager does not itself call
+    // replanRequestClient on exhaustion, for example. Building that automatic chain requires a
+    // live execution-cycle driver loop, which does not exist anywhere in this codebase for ANY
+    // component (Scheduler/ExecutionCoordinator included, since WP-024) — introducing one now,
+    // scoped only to these four components, would be new, unauthorized execution-loop
+    // architecture, not a WP-025-scoped wiring fix. The full chain is proven callable end-to-end
+    // by RetryRollbackReplanAcceptanceTests, driven explicitly rather than automatically.
     var retryManager = new RetryManager(
         dispatchedTaskStore,
         protectionGate,

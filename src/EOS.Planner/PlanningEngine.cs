@@ -169,6 +169,21 @@ public sealed class PlanningEngine(
                 + "defines no path back out of a terminal Goal state.");
         }
 
+        // CodeRabbit PR #22 round 1 (valid — matches the class of guard above): §16.1's own
+        // trigger is "a Task permanently Blocked," which can only exist for a Goal that already
+        // has a current Plan (Tasks are materialized only after PlannerGenerated, which only
+        // follows a successfully attached Plan). A Goal with PlanId == null has never reached
+        // Planned — replanning it here would silently create what is really an *initial* Plan
+        // (PreviousPlanId: null, since goal.PlanId is null) while bypassing the normal
+        // Proposed → Validated → Decomposing → Planned submission lifecycle SubmitGoalAsync
+        // already owns, and would misleadingly report it as a "replan."
+        if (goal.PlanId is null)
+        {
+            throw new InvalidOperationException(
+                $"Goal '{goalId}' has no current Plan and cannot be replanned — replanning requires "
+                + "an already-existing Plan (submit the Goal first via SubmitGoalAsync).");
+        }
+
         var validation = goalValidator.Validate(goal);
         if (!validation.Feasible)
         {
@@ -189,6 +204,14 @@ public sealed class PlanningEngine(
             RiskAdjustedConfidenceScore: tasks.Length > 0 ? 1.0 / tasks.Length : 0.0,
             PreviousPlanId: goal.PlanId);
 
+        // CodeRabbit PR #22 round 1 (valid observation, not fixed here): these two writes are
+        // application-level sequencing, not one atomic operation — if AttachPlanAsync fails after
+        // InsertAsync has already committed, the database retains an unattached PlanArtifact
+        // while Goal.PlanId still points at the old Plan. No transaction/Unit-of-Work mechanism
+        // exists anywhere in this codebase (SubmitGoalAsync's own identical Plan-insert-then-
+        // Goal-attach sequence carries the same characteristic) — introducing one here would be
+        // new, codebase-wide persistence architecture, not a WP-025-scoped fix, and requires a
+        // Board decision if ever pursued.
         await planStore.InsertAsync(revisedPlan, cancellationToken);
         await goalManager.AttachPlanAsync(goal, revisedPlan.PlanId, cancellationToken);
 

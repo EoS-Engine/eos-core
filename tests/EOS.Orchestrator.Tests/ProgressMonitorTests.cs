@@ -187,6 +187,25 @@ public class ProgressMonitorTests
         Assert.Equal(0.0, progress.PercentComplete);
     }
 
+    // CodeRabbit PR #22 round 1: distinct from the "no Tasks at all" case above — this Goal has
+    // no *current Plan* at all (Goal never yet reached Planned, or the lookup client has no
+    // mapping for it), exercising GetGoalProgressAsync's currentPlanId is null branch directly,
+    // even though a DispatchedTask row does exist for the Goal.
+    [Fact]
+    public async Task GetGoalProgressAsync_ReturnsZero_WhenTheGoalHasNoCurrentPlanAtAll()
+    {
+        var store = await CreateStoreAsync();
+        var goalId = Guid.NewGuid();
+        await store.UpsertAsync(NewTask(goalId, Guid.NewGuid(), TaskLifecycleState.Released), CancellationToken.None);
+        var progressMonitor = new ProgressMonitor(store, new FixedGoalPlanQueryClient());
+
+        var progress = await progressMonitor.GetGoalProgressAsync(goalId, CancellationToken.None);
+
+        Assert.Equal(0, progress.TotalTaskCount);
+        Assert.Empty(progress.CountByState);
+        Assert.Equal(0.0, progress.PercentComplete);
+    }
+
     // ---------- 6. Goal with only old-Plan Tasks ----------
 
     [Fact]

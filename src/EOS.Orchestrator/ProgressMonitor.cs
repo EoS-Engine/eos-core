@@ -35,6 +35,16 @@ namespace EOS.Orchestrator;
 /// </summary>
 public sealed class ProgressMonitor(DispatchedTaskStore store, IGoalPlanQueryClient goalPlanQueryClient)
 {
+    // CodeRabbit PR #22 round 1 (genuine specification gap, not resolved here): PE §11.7 defines
+    // completion only in terms of Released/Archived — it says nothing about Cancelled current-
+    // plan Tasks. A current-Plan Task that reaches Cancelled therefore remains in
+    // GetGoalProgressAsync's denominator (TotalTaskCount) forever without ever counting toward
+    // the numerator, so a Goal with one Cancelled current-Plan Task can never report 100%
+    // PercentComplete even once every other Task reaches Released/Archived. No frozen document
+    // defines whether a Cancelled Task should be excluded from the denominator, treated as
+    // complete, or (the current, disclosed behavior) counted as permanently incomplete — this is
+    // not invented/decided here, since either alternative would be an unauthorized interpretation
+    // of an undefined case, not a correction of a defined one.
     private static readonly TaskLifecycleState[] CompleteStates =
         [TaskLifecycleState.Released, TaskLifecycleState.Archived];
 

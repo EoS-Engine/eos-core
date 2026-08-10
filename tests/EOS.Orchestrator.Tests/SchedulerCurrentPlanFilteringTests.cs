@@ -88,10 +88,10 @@ public class SchedulerCurrentPlanFilteringTests
     [Fact]
     public async Task EvaluateReadinessAsync_DoesNotMakeAnOldPlanPlannedTaskDispatchable_AfterItTransitionsToReady()
     {
-        // The current-Plan filter gates SelectNextDispatchableTaskAsync, not EvaluateReadinessAsync
-        // (Planned → Ready is unaffected — only dispatch eligibility is filtered, per WP-025.4's
-        // additive-only scope). An old-Plan task may still mechanically reach Ready; it must still
-        // never be selected for dispatch.
+        // CodeRabbit PR #22 round 1: corrected — the current-Plan filter gates BOTH
+        // EvaluateReadinessAsync and SelectNextDispatchableTaskAsync (Scheduler.cs's own
+        // IsCurrentPlanAsync is applied in both methods). An old-Plan Planned task is therefore
+        // left exactly as-is — never promoted to Ready, never selected for dispatch.
         var store = await CreateStoreAsync();
         await ClearReadyQueueAsync(store);
         var goalId = Guid.NewGuid();
@@ -105,6 +105,8 @@ public class SchedulerCurrentPlanFilteringTests
         var selected = await scheduler.SelectNextDispatchableTaskAsync(CancellationToken.None);
 
         Assert.Null(selected);
+        var persisted = await store.GetByIdAsync(oldPlanTask.TaskId, CancellationToken.None);
+        Assert.Equal(TaskLifecycleState.Planned, persisted!.State);
     }
 
     // ---------- Test 4 — Goal Plan lookup ----------

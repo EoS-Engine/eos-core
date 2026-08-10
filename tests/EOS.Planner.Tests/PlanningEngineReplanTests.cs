@@ -194,6 +194,39 @@ public class PlanningEngineReplanTests
         Assert.Null(persistedOriginalPlan.PreviousPlanId);
     }
 
+    // CodeRabbit PR #22 round 1: a Goal that never reached Planned (PlanId == null) is not
+    // Cancelled/Completed, but replanning it would silently create what is really an *initial*
+    // Plan while bypassing the normal submission lifecycle — rejected for the same reason as the
+    // terminal-state cases above.
+    [Fact]
+    public async Task ReplanAfterFailureAsync_Rejects_AGoalWithNoCurrentPlan_WithoutAnySideEffect()
+    {
+        var (goalStore, _, _, _) = await BuildStackAsync(new AlwaysAllowProtectionClient());
+        var neverPlannedGoal = new Goal(
+            GoalId: Guid.NewGuid(),
+            Statement: "never submitted",
+            ParentGoalId: null,
+            DomainTags: [],
+            SubmittedByActor: "Product Owner",
+            State: GoalLifecycleState.Proposed,
+            PlanId: null);
+        await goalStore.UpsertAsync(neverPlannedGoal, CancellationToken.None);
+
+        var (_, _, replanPlanningEngine, replanPublisher) = await BuildStackAsync(
+            new AlwaysAllowProtectionClient(), new ThrowingKnowledgeClient());
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => replanPlanningEngine.ReplanAfterFailureAsync(neverPlannedGoal.GoalId, CancellationToken.None));
+
+        Assert.Contains("no current Plan", thrown.Message);
+        Assert.DoesNotContain("Knowledge infrastructure", thrown.Message);
+        Assert.Empty(replanPublisher.Published);
+        var persistedGoal = await goalStore.GetByIdAsync(neverPlannedGoal.GoalId, CancellationToken.None);
+        Assert.Equal(GoalLifecycleState.Proposed, persistedGoal!.State);
+        // No new Plan was ever persisted or attached — the Goal's PlanId is still exactly null.
+        Assert.Null(persistedGoal.PlanId);
+    }
+
     // P1 closure-audit fix: same terminal-state reasoning for Completed. GoalLifecycleState.Completed
     // has no producing method anywhere in this codebase yet (Execution Coordinator's future scope,
     // per GoalLifecycleState's own doc comment) — constructed directly via the store, matching this

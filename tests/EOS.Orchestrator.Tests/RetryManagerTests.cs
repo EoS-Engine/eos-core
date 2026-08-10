@@ -110,6 +110,27 @@ public class RetryManagerTests
         var persisted = await store.GetByIdAsync(task.TaskId, CancellationToken.None);
         Assert.Equal(TaskLifecycleState.Blocked, persisted!.State);
         Assert.Equal(MaxAttempts, persisted.RetryCount);
+        // CodeRabbit PR #22 round 1: an already-recorded root-cause note must survive exhaustion
+        // unchanged, never overwritten by a generic fallback.
+        Assert.Equal(task.BlockedReason, persisted.BlockedReason);
+    }
+
+    // CodeRabbit PR #22 round 1: the timed-out-Running path reaches exhaustion with
+    // BlockedReason already null (a successful retry always clears it) — exhaustion must supply
+    // a minimal, honest fallback rather than leaving the diagnostic field empty.
+    [Fact]
+    public async Task RetryAsync_SuppliesAFallbackBlockedReason_WhenExhaustionHasNoExistingReason()
+    {
+        var store = await CreateStoreAsync();
+        var task = NewBlockedTask(retryCount: MaxAttempts) with { BlockedReason = null };
+        await store.UpsertAsync(task, CancellationToken.None);
+        var retryManager = NewRetryManager(store, new AlwaysAllowProtectionClient(), new RecordingTaskRetriedEventPublisher());
+
+        var result = await retryManager.RetryAsync(task, CancellationToken.None);
+
+        Assert.Equal(TaskLifecycleState.Blocked, result.State);
+        Assert.NotNull(result.BlockedReason);
+        Assert.Contains("exhausted", result.BlockedReason);
     }
 
     [Fact]

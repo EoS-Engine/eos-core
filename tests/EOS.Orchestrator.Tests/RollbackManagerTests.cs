@@ -86,6 +86,12 @@ public class RollbackManagerTests
         var result = await rollbackManager.RollbackAsync(task, CancellationToken.None);
 
         Assert.Equal(expectedTarget, result.State);
+        // CodeRabbit PR #22 round 1: rolling back to Blocked must record why, matching
+        // RetryManager's own BlockedReason discipline.
+        if (expectedTarget == TaskLifecycleState.Blocked)
+        {
+            Assert.NotNull(result.BlockedReason);
+        }
     }
 
     // Constitution §6.2's Running → Blocked Rollback Path is genuinely two-valued ("→ Running

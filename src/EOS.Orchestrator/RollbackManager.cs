@@ -46,7 +46,12 @@ public sealed class RollbackManager(
     {
         var targetState = ResolveRollbackTargetState(task);
 
-        var rolledBack = task with { State = targetState };
+        // CodeRabbit PR #22 round 1: the Retry→Running rollback path lands on Blocked
+        // (ResolveRollbackTargetState below) — record why, mirroring RetryManager's own
+        // BlockedReason discipline, rather than leaving the diagnostic field at whatever it was.
+        var rolledBack = targetState == TaskLifecycleState.Blocked
+            ? task with { State = targetState, BlockedReason = $"Rolled back from {task.State} to {targetState}." }
+            : task with { State = targetState };
         await store.UpsertAsync(rolledBack, cancellationToken);
 
         // Persist-then-publish: RollbackExecuted is a factual statement that the rollback

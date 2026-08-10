@@ -23,6 +23,18 @@ namespace EOS.Orchestrator;
 /// reused as the backoff anchor rather than inventing a new field, a disclosed, minimal
 /// interpretation matching this codebase's established simplification precedent (e.g.
 /// <c>SchedulerConcurrencyCeilingCount</c>'s "one global ceiling").
+///
+/// Known limitation, not fixed here (CodeRabbit PR #22 round 1): <see cref="RetryAsync"/>
+/// computes <c>RetryCount + 1</c> from the supplied snapshot and <c>DispatchedTaskStore</c>'s
+/// UPSERT is not a conditional/claim-style update — two concurrent callers evaluating the same
+/// eligible Task could both persist the same incremented <c>RetryCount</c> and publish
+/// <c>TaskRetried</c> with the same attempt number. Not fixed with a new concurrency mechanism
+/// (transaction, lock, or optimistic version check) for the identical reason
+/// <see cref="Scheduler.SelectNextDispatchableTaskAsync"/>'s own disclosed limitation gives:
+/// nothing in this codebase's Composition Root currently invokes <see cref="RetryAsync"/> from
+/// more than one place — introducing one now would be speculative infrastructure for a caller
+/// that doesn't exist yet. This method makes no claim, implicit or otherwise, of being safe
+/// under concurrent invocation.
 /// </summary>
 public sealed class RetryManager(
     DispatchedTaskStore store,
@@ -53,10 +65,18 @@ public sealed class RetryManager(
         // never retried further. A timed-out Running Task that is also exhausted must still have
         // its Running → Blocked transition actually committed (Constitution §6.2); an
         // already-Blocked, exhausted Task's re-write is a harmless no-op upsert of unchanged
-        // values.
+        // values. BlockedReason (CodeRabbit PR #22 round 1): preserves whatever root-cause note
+        // was already recorded (the already-Blocked case), and supplies a minimal, honest fallback
+        // only when none exists (the timed-out-Running case, where RunningAt's own successful
+        // retry already cleared BlockedReason to null) — never overwrites a real, already-recorded
+        // reason with a generic one.
         if (task.RetryCount >= retryMaxAttemptsCount)
         {
-            var exhausted = task with { State = TaskLifecycleState.Blocked };
+            var exhausted = task with
+            {
+                State = TaskLifecycleState.Blocked,
+                BlockedReason = task.BlockedReason ?? $"Retry budget exhausted after {task.RetryCount} attempt(s).",
+            };
             await store.UpsertAsync(exhausted, cancellationToken);
             return exhausted;
         }
