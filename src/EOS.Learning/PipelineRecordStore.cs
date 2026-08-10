@@ -37,7 +37,12 @@ public sealed class PipelineRecordStore(string connectionString) : IPipelineReco
                 ConfidenceScore FLOAT NOT NULL,
                 Status NVARCHAR(50) NOT NULL
             )
-            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_PipelineRecord_KnowledgeGraphRef')
+            IF NOT EXISTS (
+                SELECT 1
+                FROM sys.indexes
+                WHERE object_id = OBJECT_ID(N'dbo.PipelineRecord')
+                  AND name = N'UX_PipelineRecord_KnowledgeGraphRef'
+            )
             CREATE UNIQUE INDEX UX_PipelineRecord_KnowledgeGraphRef ON PipelineRecord (KnowledgeGraphRef)
             """;
 
