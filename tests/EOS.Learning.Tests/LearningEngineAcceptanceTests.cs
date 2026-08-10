@@ -4,6 +4,7 @@ using EOS.KnowledgeGraph;
 using EOS.Reasoning;
 using EOS.SDK;
 using EOS.VectorStore;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace EOS.Learning.Tests;
@@ -24,27 +25,25 @@ namespace EOS.Learning.Tests;
 /// as authorized rather than silently reinterpreting it — disclosed here rather than silently
 /// changed.
 ///
-/// CURRENTLY SKIPPED — genuine finding, not a WP-026 code defect, discovered only through real-
-/// infrastructure execution (see the WP-026 implementation report's "Hidden Issues Found"
-/// section for full detail): <c>ReasoningEngine.CompareAsync</c> (WP-020, out of this WP's
-/// change boundary) computes confidence as accepted.Count / candidateList.Length — a RATIO over
-/// the entire candidate pool <c>IKnowledgeClient.QuerySimilarAsync</c> returns (every Lesson-type
-/// <c>KnowledgeNode</c> ever created, unbounded, shared across this repository's entire test
-/// history in one non-isolated SQL Server database). With the shared database's accumulated
-/// unrelated Lesson nodes from other WPs'/features' own tests, 3 genuinely matching candidates
-/// out of 19+ total candidates yields confidence ~0.16, and after multiplying by trustScore
-/// (0.5), overall confidence ~0.08 — far below the locked 0.5 clusteringConfidenceMinimum, even
-/// though the locked "acceptedMatches >= 3" rule is independently satisfied. WP-026's own code
-/// (Ingestion/ClusterTrigger/ConfidenceGuard) is verified behaving exactly as authorized; the
-/// promotion rule's two locked conditions compose in a way that becomes structurally difficult
-/// to satisfy as the shared Knowledge Graph accumulates unrelated Lesson volume — reported for a
-/// decision rather than silently worked around (would require either changing the locked
-/// clusteringConfidenceMinimum, changing WP-020's out-of-scope CompareAsync formula, or bounding
-/// QuerySimilarAsync's candidate pool — all outside this WP's authorized change boundary).
+/// Independent WP-026 verification reclassified an earlier "always skipped" version of this
+/// test: the observed confidence dilution was dominated by this test's OWN prior, un-cleaned-up
+/// executions leaving real <c>PipelineRecord</c>/<c>KnowledgeNode</c> rows in the shared database
+/// (verified via direct SQL: of 1648 accumulated Lesson-type <c>KnowledgeNode</c> rows, only the
+/// ~20 with a matching <c>PipelineRecord</c> can ever surface as a <c>ClusterTrigger</c>
+/// candidate — and those were this test's own repeated-run residue, not unrelated feature
+/// pollution). This test now cleans up exactly the rows it itself creates (scoped by this run's
+/// own freshly-generated GUIDs, captured incrementally so a mid-run failure still cleans up
+/// whatever was created before the failure) in a <c>finally</c> block, so repeated executions no
+/// longer dilute each other. A residual, smaller, genuine forward-looking concern remains and is
+/// intentionally NOT addressed here (Board-level, outside this file's authority): in long-running
+/// production use, <c>CompareAsync</c>'s ratio-based confidence is bounded by the backlog of
+/// not-yet-clustered <c>EOS.Learning</c> records sharing a node type, which could still dilute a
+/// genuine cluster if that backlog grows large — this fix only removes this TEST's own
+/// self-inflicted contribution to that pool, it does not bound production's.
 /// </summary>
 public class LearningEngineAcceptanceTests
 {
-    [Fact(Skip = "Genuine finding, not a WP-026 defect — see class doc comment. Pending a decision outside this WP's change boundary.")]
+    [Fact]
     public async Task FourSimilarLessons_ClusterAndPromoteToAPattern_WithARealLessonPromotedEvent()
     {
         var knowledgeGraphStore = new KnowledgeGraphStore(TestConnectionString.SqlServer);
@@ -76,35 +75,94 @@ public class LearningEngineAcceptanceTests
             new RecordingLessonQuarantinedEventPublisher());
 
         var sharedDomainTag = $"acceptance-{Guid.NewGuid()}";
+        // Captured incrementally (not just at the end) so a failure partway through the loop or
+        // the assertions below still leaves this `finally` able to clean up whatever this run
+        // actually created — never more, never less, and never anything from another run (every
+        // ID here is this run's own freshly-generated Guid, so collision with any other run's or
+        // any other test's data is not possible).
         var episodicEntryIds = new List<Guid>();
-        for (var i = 0; i < 4; i++)
+        try
         {
-            var key = $"wp026-acceptance:{Guid.NewGuid()}";
-            memorySourceStore.Seed(key, $"a deliberately similar test lesson, number {i}");
-            var source = new MemoryRef(MemoryType.Working, key);
-            var episodicEntryId = await knowledgeClient.ConsolidateAsync(
-                source, "worth remembering", ["artifact://evidence"], suppressLessonLearned: true, cancellationToken: CancellationToken.None);
+            for (var i = 0; i < 4; i++)
+            {
+                var key = $"wp026-acceptance:{Guid.NewGuid()}";
+                memorySourceStore.Seed(key, $"a deliberately similar test lesson, number {i}");
+                var source = new MemoryRef(MemoryType.Working, key);
+                var episodicEntryId = await knowledgeClient.ConsolidateAsync(
+                    source, "worth remembering", ["artifact://evidence"], suppressLessonLearned: true, cancellationToken: CancellationToken.None);
+                episodicEntryIds.Add(episodicEntryId);
 
-            // Give every Lesson node the same domain tag so ReasoningEngine.CompareAsync's
-            // structural match (DomainTags overlap) accepts them — real infrastructure, no
-            // mocked similarity judgment.
-            var node = await knowledgeGraphStore.GetByIdAsync(episodicEntryId, CancellationToken.None);
-            Assert.NotNull(node);
-            await knowledgeGraphStore.UpsertAsync(node with { DomainTags = [sharedDomainTag] }, CancellationToken.None);
+                // Give every Lesson node the same domain tag so ReasoningEngine.CompareAsync's
+                // structural match (DomainTags overlap) accepts them — real infrastructure, no
+                // mocked similarity judgment.
+                var node = await knowledgeGraphStore.GetByIdAsync(episodicEntryId, CancellationToken.None);
+                Assert.NotNull(node);
+                await knowledgeGraphStore.UpsertAsync(node with { DomainTags = [sharedDomainTag] }, CancellationToken.None);
 
-            episodicEntryIds.Add(episodicEntryId);
-            await ingestion.OnLessonLearnedAsync(episodicEntryId, key, CancellationToken.None);
+                await ingestion.OnLessonLearnedAsync(episodicEntryId, key, CancellationToken.None);
+            }
+
+            var firstThreeStayAsLessons = episodicEntryIds.Take(3)
+                .Select(id => pipelineRecordStore.GetBySourceLessonIdAsync(id, CancellationToken.None).Result);
+            Assert.All(firstThreeStayAsLessons, record => Assert.Equal(PipelineStage.Lesson, record!.Stage));
+
+            var fourthRecord = await pipelineRecordStore.GetBySourceLessonIdAsync(episodicEntryIds[3], CancellationToken.None);
+            Assert.NotNull(fourthRecord);
+            Assert.Equal(PipelineStage.Pattern, fourthRecord.Stage);
+            Assert.Equal(1, lessonPromotedPublisher.CallCount);
+            Assert.Equal(fourthRecord.RecordId, lessonPromotedPublisher.LastRecordId);
+        }
+        finally
+        {
+            await CleanUpAsync(episodicEntryIds);
+        }
+    }
+
+    /// <summary>
+    /// Deletes exactly the rows this test run created, scoped by the run's own freshly-generated
+    /// <paramref name="episodicEntryIds"/> (each is a fresh <see cref="Guid"/>, so this can never
+    /// match any other run's or any other test's data) — so repeated executions of this test no
+    /// longer dilute each other's <c>ClusterTrigger</c> candidate pool. Neither
+    /// <c>PipelineRecordStore</c> nor <c>KnowledgeGraphStore</c> expose a delete method (by
+    /// design — production code has no reason to delete pipeline/knowledge history), so this
+    /// uses a direct, narrowly-scoped SQL statement, test-only, matching this repository's
+    /// existing SQL Server test infrastructure (no new database technology).
+    /// </summary>
+    private static async Task CleanUpAsync(IReadOnlyCollection<Guid> episodicEntryIds)
+    {
+        if (episodicEntryIds.Count == 0)
+        {
+            return;
         }
 
-        var firstThreeStayAsLessons = episodicEntryIds.Take(3)
-            .Select(id => pipelineRecordStore.GetBySourceLessonIdAsync(id, CancellationToken.None).Result);
-        Assert.All(firstThreeStayAsLessons, record => Assert.Equal(PipelineStage.Lesson, record!.Stage));
+        await using var connection = new SqlConnection(TestConnectionString.SqlServer);
+        await connection.OpenAsync(CancellationToken.None);
 
-        var fourthRecord = await pipelineRecordStore.GetBySourceLessonIdAsync(episodicEntryIds[3], CancellationToken.None);
-        Assert.NotNull(fourthRecord);
-        Assert.Equal(PipelineStage.Pattern, fourthRecord.Stage);
-        Assert.Equal(1, lessonPromotedPublisher.CallCount);
-        Assert.Equal(fourthRecord.RecordId, lessonPromotedPublisher.LastRecordId);
+        var parameterNames = episodicEntryIds.Select((_, index) => $"@Id{index}").ToArray();
+
+        await using (var deletePipelineRecords = connection.CreateCommand())
+        {
+            deletePipelineRecords.CommandText =
+                $"DELETE FROM PipelineRecord WHERE KnowledgeGraphRef IN ({string.Join(", ", parameterNames)})";
+            AddIdParameters(deletePipelineRecords, parameterNames, episodicEntryIds);
+            await deletePipelineRecords.ExecuteNonQueryAsync(CancellationToken.None);
+        }
+
+        await using (var deleteKnowledgeNodes = connection.CreateCommand())
+        {
+            deleteKnowledgeNodes.CommandText = $"DELETE FROM KnowledgeNode WHERE NodeId IN ({string.Join(", ", parameterNames)})";
+            AddIdParameters(deleteKnowledgeNodes, parameterNames, episodicEntryIds);
+            await deleteKnowledgeNodes.ExecuteNonQueryAsync(CancellationToken.None);
+        }
+    }
+
+    private static void AddIdParameters(SqlCommand command, IReadOnlyList<string> parameterNames, IReadOnlyCollection<Guid> ids)
+    {
+        var idArray = ids.ToArray();
+        for (var index = 0; index < idArray.Length; index++)
+        {
+            command.Parameters.AddWithValue(parameterNames[index], idArray[index]);
+        }
     }
 }
 
