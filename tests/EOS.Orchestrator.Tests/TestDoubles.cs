@@ -152,6 +152,111 @@ internal sealed class RecordingRollbackExecutedEventPublisher : IRollbackExecute
     public void PublishRollbackExecuted(Guid taskId, string rollbackPathUsed) => Published.Add((taskId, rollbackPathUsed));
 }
 
+/// <summary>Hand-rolled <see cref="IPlanningClient"/> stub — returns a fixed <see cref="Plan"/> for any submitted Goal.</summary>
+internal sealed class FixedPlanningClient(Plan plan) : IPlanningClient
+{
+    public Task<Plan> SubmitGoalAsync(Goal goal, CancellationToken cancellationToken = default) => Task.FromResult(plan);
+
+    public Task<GoalStatus> GetGoalStatusAsync(string goalId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+
+    public Task CancelGoalAsync(string goalId, string reason, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+}
+
+/// <summary>Hand-rolled <see cref="IReasoningEngineClient"/> stub — only <see cref="ReasonAsync"/> is used by WP-028.</summary>
+internal sealed class FixedReasoningEngineClient(Decision decision) : IReasoningEngineClient
+{
+    public Task<Decision[]> ReasonAsync(ReasoningRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new[] { decision });
+
+    public Task<ConfidenceGuardResult> CompareAsync(
+        PipelineRecord subject, IEnumerable<PipelineRecord> candidates, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+
+    public Task<TrustSignal> GetTrustSignalAsync(string sourceRole, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+
+    public Task<Summary> SummarizeAsync(string content, int? sizeBudget = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+}
+
+/// <summary>Proves step 8 (Plan) is never reached when step 7 (Validate) denies.</summary>
+internal sealed class NeverCalledPlanningClient : IPlanningClient
+{
+    public Task<Plan> SubmitGoalAsync(Goal goal, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("SubmitGoalAsync must not be called when step 7 denies.");
+
+    public Task<GoalStatus> GetGoalStatusAsync(string goalId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+
+    public Task CancelGoalAsync(string goalId, string reason, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+}
+
+internal static class TestDecisions
+{
+    public static Decision Low(double riskScore = 5) => new(
+        DecisionId: Guid.NewGuid(),
+        RequestId: Guid.NewGuid(),
+        ReasoningTypeApplied: ReasoningType.DeterministicReasoning,
+        SelectedHypothesis: "test hypothesis",
+        RejectedHypotheses: [],
+        EvidenceRefs: [],
+        Confidence: 0.9,
+        Explanation: new Explanation("test", [], [], [], "test", []),
+        TradeOffs: "none",
+        RiskScore: riskScore,
+        Reproducible: true,
+        OccurredAt: DateTimeOffset.UtcNow);
+}
+
+internal sealed class RecordingLoopIterationStartedEventPublisher : ILoopIterationStartedEventPublisher
+{
+    public List<(Guid IterationId, string TriggerSource, int EntryStep)> Published { get; } = [];
+
+    public void PublishLoopIterationStarted(Guid iterationId, string triggerSource, int entryStep) =>
+        Published.Add((iterationId, triggerSource, entryStep));
+}
+
+internal sealed class RecordingLoopIterationCompletedEventPublisher : ILoopIterationCompletedEventPublisher
+{
+    public List<(Guid IterationId, int[] StepsTraversed, string Outcome)> Published { get; } = [];
+
+    public void PublishLoopIterationCompleted(Guid iterationId, int[] stepsTraversed, string outcome) =>
+        Published.Add((iterationId, stepsTraversed, outcome));
+}
+
+/// <summary>
+/// Mirrors <see cref="StateCapturingTaskStartedEventPublisher"/>'s exact precedent — proves
+/// <c>LoopIterationCompleted</c> is published strictly after the Completed transition's
+/// persistence write, not before or concurrently with it.
+/// </summary>
+internal sealed class StateCapturingLoopIterationCompletedEventPublisher(ILoopIterationStore store) : ILoopIterationCompletedEventPublisher
+{
+    public List<string?> ObservedStateAtPublishTime { get; } = [];
+
+    public void PublishLoopIterationCompleted(Guid iterationId, int[] stepsTraversed, string outcome) =>
+        ObservedStateAtPublishTime.Add(store.GetByIdAsync(iterationId, CancellationToken.None).GetAwaiter().GetResult()!.State);
+}
+
+/// <summary>Proves LoopController persists Failed state and never publishes LoopIterationCompleted when a step throws.</summary>
+internal sealed class ThrowingReasoningEngineClient : IReasoningEngineClient
+{
+    public Task<Decision[]> ReasonAsync(ReasoningRequest request, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Simulated Reasoning Engine failure.");
+
+    public Task<ConfidenceGuardResult> CompareAsync(
+        PipelineRecord subject, IEnumerable<PipelineRecord> candidates, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+
+    public Task<TrustSignal> GetTrustSignalAsync(string sourceRole, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+
+    public Task<Summary> SummarizeAsync(string content, int? sizeBudget = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+}
+
 /// <summary>
 /// Mirrors <see cref="StateCapturingTaskStartedEventPublisher"/>'s exact precedent — proves
 /// <c>RollbackExecuted</c> is published strictly after the rollback transition's persistence
