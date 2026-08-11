@@ -437,6 +437,76 @@ try
     IReplanRequestClient replanRequestClient = new PlanningEngineReplanRequestClient(planningEngine);
     _ = replanRequestClient;
 
+    // WP-028: Autonomous Engineering Loop — Core Cycle & Trigger Sources
+    // (Autonomous-Engineering-Loop-Specification-v1.0 §7/§8). LoopController sequences steps
+    // 1-15 and 18 only (16-17 Self-Evaluate/Improve are WP-029); every step cites an already-
+    // existing subsystem capability, verified against this repository, never invented. WP-028
+    // Decision 7 (locked): step 12 (Measure Outcomes) has no citable capability anywhere in this
+    // repository (no Reality Validation/Telemetry KPI mechanism is implemented) — recorded as
+    // traversed structurally only, never simulated.
+    var loopIterationStore = new LoopIterationStore(connectionOptions.SqlServerConnectionString);
+    await loopIterationStore.EnsureTableExistsAsync(CancellationToken.None);
+
+    var loopController = new LoopController(
+        planningClient,
+        reasoningEngine,
+        protectionGate,
+        resourceManagementClient,
+        scheduler,
+        executionCoordinator,
+        progressMonitor,
+        loopIterationStore,
+        new EventMediatorLoopIterationStartedEventPublisher(eventMediator),
+        new EventMediatorLoopIterationCompletedEventPublisher(eventMediator));
+
+    // CodeRabbit R1 finding #4: EventMediator.Publish invokes every subscriber directly and does
+    // not isolate exceptions between them — without a handler-local boundary, a RunIterationAsync
+    // failure would propagate back through Publish and abort the unrelated subsystem operation
+    // that emitted the triggering event. EventMediator itself, its publishing semantics, and the
+    // synchronous .GetAwaiter().GetResult() execution model are all unmodified; this is a narrow
+    // catch at the handler boundary only, using this file's own established ILogger<T> convention
+    // (see compressionLogger below) — not a new logging framework.
+    var loopControllerLogger = host.Services.GetRequiredService<ILogger<LoopController>>();
+
+    void RunLoopIterationSafely(TriggerContext trigger)
+    {
+        try
+        {
+            loopController.RunIterationAsync(trigger, CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            loopControllerLogger.LogError(
+                ex, "WP-028 Loop iteration failed for trigger source {TriggerSource}.", trigger.TriggerSource);
+        }
+    }
+
+    // Reactive EventMediator wiring only (WP-028 Decision 5b) — every handler below just
+    // constructs a TriggerContext and invokes the already-real, directly-callable
+    // RunIterationAsync; no scheduler, timer, or host process is introduced (Decision 5a). Real,
+    // independently tested infrastructure with no live producer for several of these payloads yet
+    // (documented per subscription below), matching this file's own established precedent
+    // (executionCoordinator/progressMonitor above) for components with no reachable driver.
+    eventMediator.Subscribe<LessonStalledPayload>(envelope =>
+        RunLoopIterationSafely(new TriggerContext("LearningOpportunity", envelope.Payload.RecordId.ToString())));
+    eventMediator.Subscribe<FitnessFunctionViolatedPayload>(envelope =>
+        RunLoopIterationSafely(new TriggerContext("LearningOpportunity", envelope.Payload.FitnessFunctionId)));
+    eventMediator.Subscribe<KnowledgeFreshnessExpiredPayload>(envelope =>
+        RunLoopIterationSafely(new TriggerContext("KnowledgeUpdate", envelope.Payload.NodeId.ToString())));
+    // No producer exists anywhere in this repository for KnowledgeDriftDetected (WP-018's own
+    // "intentionally unwired" disclosure) — this subscription is real, architecturally valid
+    // infrastructure that will not fire until a future WP wires a producer.
+    eventMediator.Subscribe<KnowledgeDriftDetectedPayload>(envelope =>
+        RunLoopIterationSafely(new TriggerContext("KnowledgeUpdate", envelope.Payload.NodeId.ToString())));
+    eventMediator.Subscribe<ResourceThresholdCrossedPayload>(envelope =>
+        RunLoopIterationSafely(new TriggerContext("PerformanceDegradation", envelope.Payload.ResourceType.ToString())));
+    // A second subscriber alongside resourceMonitor's own pre-existing one (EventMediator
+    // supports multiple handlers per payload type) — no producer exists anywhere in this
+    // repository for TaskBlocked either (confirmed by direct search), so, like
+    // KnowledgeDriftDetected above, this will not fire until a future WP adds one.
+    eventMediator.Subscribe<TaskBlockedPayload>(envelope =>
+        RunLoopIterationSafely(new TriggerContext("Failure", envelope.Payload.TaskId.ToString())));
+
     if (args is ["compress"])
     {
         var compressionLogger = host.Services.GetRequiredService<ILogger<CompressionSweep>>();
@@ -1291,6 +1361,38 @@ internal sealed class EventMediatorSelfReferentialOutcomeFlaggedEventPublisher(E
             payload: new SelfReferentialOutcomeFlaggedPayload(recordId, taskId)));
     }
 }
+
+// WP-028: Autonomous-Engineering-Loop-Specification-v1.0 §17's two new events — payloads frozen
+// exactly as specified in that section's table.
+internal sealed record LoopIterationStartedPayload(Guid IterationId, string TriggerSource, int EntryStep);
+
+internal sealed class EventMediatorLoopIterationStartedEventPublisher(EventMediator eventMediator) : ILoopIterationStartedEventPublisher
+{
+    public void PublishLoopIterationStarted(Guid iterationId, string triggerSource, int entryStep)
+    {
+        eventMediator.Publish(EventEnvelope<LoopIterationStartedPayload>.Create(
+            eventType: "LoopIterationStarted", version: "v1", producer: "EOS.Orchestrator",
+            payload: new LoopIterationStartedPayload(iterationId, triggerSource, entryStep)));
+    }
+}
+
+internal sealed record LoopIterationCompletedPayload(Guid IterationId, int[] StepsTraversed, string Outcome);
+
+internal sealed class EventMediatorLoopIterationCompletedEventPublisher(EventMediator eventMediator) : ILoopIterationCompletedEventPublisher
+{
+    public void PublishLoopIterationCompleted(Guid iterationId, int[] stepsTraversed, string outcome)
+    {
+        eventMediator.Publish(EventEnvelope<LoopIterationCompletedPayload>.Create(
+            eventType: "LoopIterationCompleted", version: "v1", producer: "EOS.Orchestrator",
+            payload: new LoopIterationCompletedPayload(iterationId, stepsTraversed, outcome)));
+    }
+}
+
+// WP-028: KnowledgeDriftDetected (Knowledge-Management-Specification-v1.0 §19, IKnowledgeDriftDetectedEventPublisher)
+// has never had a payload type or subscription anywhere in this repository — its own doc comment
+// states it is "intentionally unwired to any automatic trigger" (WP-018). This payload record is
+// new so WP-028 can subscribe to it if a future producer is ever wired; no producer exists today.
+internal sealed record KnowledgeDriftDetectedPayload(Guid NodeId, string DriftDescription);
 
 /// <summary>
 /// WP-027 §11.5's <see cref="ITaskProvenanceQueryClient"/>: no production code anywhere in this
