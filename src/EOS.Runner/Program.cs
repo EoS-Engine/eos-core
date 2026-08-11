@@ -459,6 +459,28 @@ try
         new EventMediatorLoopIterationStartedEventPublisher(eventMediator),
         new EventMediatorLoopIterationCompletedEventPublisher(eventMediator));
 
+    // CodeRabbit R1 finding #4: EventMediator.Publish invokes every subscriber directly and does
+    // not isolate exceptions between them — without a handler-local boundary, a RunIterationAsync
+    // failure would propagate back through Publish and abort the unrelated subsystem operation
+    // that emitted the triggering event. EventMediator itself, its publishing semantics, and the
+    // synchronous .GetAwaiter().GetResult() execution model are all unmodified; this is a narrow
+    // catch at the handler boundary only, using this file's own established ILogger<T> convention
+    // (see compressionLogger below) — not a new logging framework.
+    var loopControllerLogger = host.Services.GetRequiredService<ILogger<LoopController>>();
+
+    void RunLoopIterationSafely(TriggerContext trigger)
+    {
+        try
+        {
+            loopController.RunIterationAsync(trigger, CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            loopControllerLogger.LogError(
+                ex, "WP-028 Loop iteration failed for trigger source {TriggerSource}.", trigger.TriggerSource);
+        }
+    }
+
     // Reactive EventMediator wiring only (WP-028 Decision 5b) — every handler below just
     // constructs a TriggerContext and invokes the already-real, directly-callable
     // RunIterationAsync; no scheduler, timer, or host process is introduced (Decision 5a). Real,
@@ -466,36 +488,24 @@ try
     // (documented per subscription below), matching this file's own established precedent
     // (executionCoordinator/progressMonitor above) for components with no reachable driver.
     eventMediator.Subscribe<LessonStalledPayload>(envelope =>
-        loopController.RunIterationAsync(
-            new TriggerContext("LearningOpportunity", envelope.Payload.RecordId.ToString()), CancellationToken.None)
-            .GetAwaiter().GetResult());
+        RunLoopIterationSafely(new TriggerContext("LearningOpportunity", envelope.Payload.RecordId.ToString())));
     eventMediator.Subscribe<FitnessFunctionViolatedPayload>(envelope =>
-        loopController.RunIterationAsync(
-            new TriggerContext("LearningOpportunity", envelope.Payload.FitnessFunctionId), CancellationToken.None)
-            .GetAwaiter().GetResult());
+        RunLoopIterationSafely(new TriggerContext("LearningOpportunity", envelope.Payload.FitnessFunctionId)));
     eventMediator.Subscribe<KnowledgeFreshnessExpiredPayload>(envelope =>
-        loopController.RunIterationAsync(
-            new TriggerContext("KnowledgeUpdate", envelope.Payload.NodeId.ToString()), CancellationToken.None)
-            .GetAwaiter().GetResult());
+        RunLoopIterationSafely(new TriggerContext("KnowledgeUpdate", envelope.Payload.NodeId.ToString())));
     // No producer exists anywhere in this repository for KnowledgeDriftDetected (WP-018's own
     // "intentionally unwired" disclosure) — this subscription is real, architecturally valid
     // infrastructure that will not fire until a future WP wires a producer.
     eventMediator.Subscribe<KnowledgeDriftDetectedPayload>(envelope =>
-        loopController.RunIterationAsync(
-            new TriggerContext("KnowledgeUpdate", envelope.Payload.NodeId.ToString()), CancellationToken.None)
-            .GetAwaiter().GetResult());
+        RunLoopIterationSafely(new TriggerContext("KnowledgeUpdate", envelope.Payload.NodeId.ToString())));
     eventMediator.Subscribe<ResourceThresholdCrossedPayload>(envelope =>
-        loopController.RunIterationAsync(
-            new TriggerContext("PerformanceDegradation", envelope.Payload.ResourceType.ToString()), CancellationToken.None)
-            .GetAwaiter().GetResult());
+        RunLoopIterationSafely(new TriggerContext("PerformanceDegradation", envelope.Payload.ResourceType.ToString())));
     // A second subscriber alongside resourceMonitor's own pre-existing one (EventMediator
     // supports multiple handlers per payload type) — no producer exists anywhere in this
     // repository for TaskBlocked either (confirmed by direct search), so, like
     // KnowledgeDriftDetected above, this will not fire until a future WP adds one.
     eventMediator.Subscribe<TaskBlockedPayload>(envelope =>
-        loopController.RunIterationAsync(
-            new TriggerContext("Failure", envelope.Payload.TaskId.ToString()), CancellationToken.None)
-            .GetAwaiter().GetResult());
+        RunLoopIterationSafely(new TriggerContext("Failure", envelope.Payload.TaskId.ToString())));
 
     if (args is ["compress"])
     {

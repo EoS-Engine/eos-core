@@ -99,7 +99,7 @@ public sealed class LoopIterationStore(string connectionString) : ILoopIteration
     }
 
     public async Task CompleteAsync(
-        Guid iterationId, string outcome, int[] stepsTraversed, CancellationToken cancellationToken = default)
+        Guid iterationId, string state, string outcome, int[] stepsTraversed, CancellationToken cancellationToken = default)
     {
         await using var connection = new SqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -107,10 +107,11 @@ public sealed class LoopIterationStore(string connectionString) : ILoopIteration
         await using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE LoopIteration
-            SET State = 'Completed', Outcome = @Outcome, StepsTraversedJson = @StepsTraversedJson, CompletedAt = @CompletedAt
+            SET State = @State, Outcome = @Outcome, StepsTraversedJson = @StepsTraversedJson, CompletedAt = @CompletedAt
             WHERE IterationId = @IterationId
             """;
 
+        command.Parameters.AddWithValue("@State", state);
         command.Parameters.AddWithValue("@Outcome", outcome);
         command.Parameters.AddWithValue("@StepsTraversedJson", JsonSerializer.Serialize(stepsTraversed));
         command.Parameters.AddWithValue("@CompletedAt", DateTimeOffset.UtcNow);

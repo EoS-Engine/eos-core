@@ -94,6 +94,12 @@ internal sealed class AlwaysDenyProtectionClient : IProtectionClient
     public ValidationResult Validate(ActionRequest action) => new(ProtectionVerdict.Deny, RiskTier.Low, "Denied by test.");
 }
 
+/// <summary>Configurable-verdict stub — used to prove Defer/Retry short-circuit identically to Deny (Step 7's Protection Invariant).</summary>
+internal sealed class FixedVerdictProtectionClient(ProtectionVerdict verdict) : IProtectionClient
+{
+    public ValidationResult Validate(ActionRequest action) => new(verdict, RiskTier.Low, "Set by test.");
+}
+
 /// <summary>
 /// Simulates Protection infrastructure genuinely failing (as opposed to returning a Deny
 /// verdict) — used to prove <see cref="ExecutionCoordinator"/> never converts a Protection
@@ -167,8 +173,13 @@ internal sealed class FixedPlanningClient(Plan plan) : IPlanningClient
 /// <summary>Hand-rolled <see cref="IReasoningEngineClient"/> stub — only <see cref="ReasonAsync"/> is used by WP-028.</summary>
 internal sealed class FixedReasoningEngineClient(Decision decision) : IReasoningEngineClient
 {
-    public Task<Decision[]> ReasonAsync(ReasoningRequest request, CancellationToken cancellationToken = default) =>
-        Task.FromResult(new[] { decision });
+    public ReasoningRequest? LastRequest { get; private set; }
+
+    public Task<Decision[]> ReasonAsync(ReasoningRequest request, CancellationToken cancellationToken = default)
+    {
+        LastRequest = request;
+        return Task.FromResult(new[] { decision });
+    }
 
     public Task<ConfidenceGuardResult> CompareAsync(
         PipelineRecord subject, IEnumerable<PipelineRecord> candidates, CancellationToken cancellationToken = default) =>
@@ -211,12 +222,79 @@ internal static class TestDecisions
         OccurredAt: DateTimeOffset.UtcNow);
 }
 
+/// <summary>
+/// Simulates a mid-iteration cancellation: cancels the shared <paramref name="cancellationTokenSource"/>
+/// (the same source supplying <c>RunIterationAsync</c>'s own token) and then throws
+/// <see cref="OperationCanceledException"/> against that now-cancelled token — proving the
+/// compensating Failed-state write (which must use <see cref="CancellationToken.None"/>, not the
+/// caller's token) still succeeds even though the original failure's own token is cancelled.
+/// </summary>
+internal sealed class CancellingReasoningEngineClient(CancellationTokenSource cancellationTokenSource) : IReasoningEngineClient
+{
+    public Task<Decision[]> ReasonAsync(ReasoningRequest request, CancellationToken cancellationToken = default)
+    {
+        cancellationTokenSource.Cancel();
+        throw new OperationCanceledException(cancellationTokenSource.Token);
+    }
+
+    public Task<ConfidenceGuardResult> CompareAsync(
+        PipelineRecord subject, IEnumerable<PipelineRecord> candidates, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+
+    public Task<TrustSignal> GetTrustSignalAsync(string sourceRole, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+
+    public Task<Summary> SummarizeAsync(string content, int? sizeBudget = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028's LoopController.");
+}
+
+/// <summary>
+/// Wraps a real <see cref="ILoopIterationStore"/>, delegating everything except
+/// <see cref="CompleteAsync"/>, which always throws — proves a persistence failure during the
+/// catch block's compensating write preserves the original exception via AggregateException
+/// rather than replacing it (CodeRabbit R1 finding #3).
+/// </summary>
+internal sealed class ThrowingOnCompleteLoopIterationStore(ILoopIterationStore inner) : ILoopIterationStore
+{
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken = default) =>
+        inner.EnsureTableExistsAsync(cancellationToken);
+
+    public Task InsertAsync(LoopIteration iteration, CancellationToken cancellationToken = default) =>
+        inner.InsertAsync(iteration, cancellationToken);
+
+    public Task UpdateStateAsync(Guid iterationId, string state, int[] stepsTraversed, CancellationToken cancellationToken = default) =>
+        inner.UpdateStateAsync(iterationId, state, stepsTraversed, cancellationToken);
+
+    public Task CompleteAsync(
+        Guid iterationId, string state, string outcome, int[] stepsTraversed, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Simulated terminal-persistence failure.");
+
+    public Task<LoopIteration?> GetByIdAsync(Guid iterationId, CancellationToken cancellationToken = default) =>
+        inner.GetByIdAsync(iterationId, cancellationToken);
+
+    public Task<LoopIteration?> GetLatestAsync(CancellationToken cancellationToken = default) =>
+        inner.GetLatestAsync(cancellationToken);
+}
+
 internal sealed class RecordingLoopIterationStartedEventPublisher : ILoopIterationStartedEventPublisher
 {
     public List<(Guid IterationId, string TriggerSource, int EntryStep)> Published { get; } = [];
 
     public void PublishLoopIterationStarted(Guid iterationId, string triggerSource, int entryStep) =>
         Published.Add((iterationId, triggerSource, entryStep));
+}
+
+/// <summary>
+/// Mirrors <see cref="StateCapturingLoopIterationCompletedEventPublisher"/>'s exact precedent —
+/// proves <c>LoopIterationStarted</c> is published strictly after the initial Triggered-state
+/// insert, not before or concurrently with it.
+/// </summary>
+internal sealed class StateCapturingLoopIterationStartedEventPublisher(ILoopIterationStore store) : ILoopIterationStartedEventPublisher
+{
+    public List<bool> IterationExistedAtPublishTime { get; } = [];
+
+    public void PublishLoopIterationStarted(Guid iterationId, string triggerSource, int entryStep) =>
+        IterationExistedAtPublishTime.Add(store.GetByIdAsync(iterationId, CancellationToken.None).GetAwaiter().GetResult() is not null);
 }
 
 internal sealed class RecordingLoopIterationCompletedEventPublisher : ILoopIterationCompletedEventPublisher
@@ -238,6 +316,49 @@ internal sealed class StateCapturingLoopIterationCompletedEventPublisher(ILoopIt
 
     public void PublishLoopIterationCompleted(Guid iterationId, int[] stepsTraversed, string outcome) =>
         ObservedStateAtPublishTime.Add(store.GetByIdAsync(iterationId, CancellationToken.None).GetAwaiter().GetResult()!.State);
+}
+
+/// <summary>Proves a LoopIterationStarted publication failure is compensated by a Failed terminal write, not left unpersisted.</summary>
+internal sealed class ThrowingLoopIterationStartedEventPublisher : ILoopIterationStartedEventPublisher
+{
+    public Guid? LastIterationId { get; private set; }
+
+    public void PublishLoopIterationStarted(Guid iterationId, string triggerSource, int entryStep)
+    {
+        LastIterationId = iterationId;
+        throw new InvalidOperationException("Simulated LoopIterationStarted publication failure.");
+    }
+}
+
+/// <summary>
+/// Wraps a real <see cref="ILoopIterationStore"/>, delegating everything except
+/// <see cref="CompleteAsync"/> when called with <c>state == "Completed"</c> (the successful
+/// terminal write), which always throws — the compensating <c>state == "Failed"</c> write still
+/// delegates to the real store and succeeds. Proves a successful-terminal-persistence failure is
+/// compensated by a Failed write, not left stuck at an intermediate state.
+/// </summary>
+internal sealed class ThrowingOnSuccessfulCompleteLoopIterationStore(ILoopIterationStore inner) : ILoopIterationStore
+{
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken = default) =>
+        inner.EnsureTableExistsAsync(cancellationToken);
+
+    public Task InsertAsync(LoopIteration iteration, CancellationToken cancellationToken = default) =>
+        inner.InsertAsync(iteration, cancellationToken);
+
+    public Task UpdateStateAsync(Guid iterationId, string state, int[] stepsTraversed, CancellationToken cancellationToken = default) =>
+        inner.UpdateStateAsync(iterationId, state, stepsTraversed, cancellationToken);
+
+    public Task CompleteAsync(
+        Guid iterationId, string state, string outcome, int[] stepsTraversed, CancellationToken cancellationToken = default) =>
+        state == "Completed"
+            ? throw new InvalidOperationException("Simulated successful-terminal-persistence failure.")
+            : inner.CompleteAsync(iterationId, state, outcome, stepsTraversed, cancellationToken);
+
+    public Task<LoopIteration?> GetByIdAsync(Guid iterationId, CancellationToken cancellationToken = default) =>
+        inner.GetByIdAsync(iterationId, cancellationToken);
+
+    public Task<LoopIteration?> GetLatestAsync(CancellationToken cancellationToken = default) =>
+        inner.GetLatestAsync(cancellationToken);
 }
 
 /// <summary>Proves LoopController persists Failed state and never publishes LoopIterationCompleted when a step throws.</summary>

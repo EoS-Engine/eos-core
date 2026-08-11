@@ -13,7 +13,15 @@ public interface ILoopIterationStore
 
     Task UpdateStateAsync(Guid iterationId, string state, int[] stepsTraversed, CancellationToken cancellationToken = default);
 
-    Task CompleteAsync(Guid iterationId, string outcome, int[] stepsTraversed, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Persists any terminal state (<c>Completed</c> or <c>Failed</c>) together with its outcome,
+    /// steps traversed, and completion timestamp in one write — CodeRabbit R1 finding #2: the
+    /// prior split (<see cref="UpdateStateAsync"/> could write <c>Failed</c> but not
+    /// <c>Outcome</c>/<c>CompletedAt</c>; this method could only ever write <c>Completed</c>) made
+    /// a correctly-persisted failed terminal iteration impossible. <paramref name="state"/> is
+    /// bound as a parameter, never hard-coded.
+    /// </summary>
+    Task CompleteAsync(Guid iterationId, string state, string outcome, int[] stepsTraversed, CancellationToken cancellationToken = default);
 
     Task<LoopIteration?> GetByIdAsync(Guid iterationId, CancellationToken cancellationToken = default);
 

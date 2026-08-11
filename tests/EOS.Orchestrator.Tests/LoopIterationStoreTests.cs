@@ -71,17 +71,38 @@ public class LoopIterationStoreTests
     }
 
     [Fact]
-    public async Task CompleteAsync_SetsStateOutcomeAndCompletedAt()
+    public async Task CompleteAsync_SetsStateOutcomeAndCompletedAt_ForTheSuccessfulTerminalCase()
     {
         var store = await CreateStoreAsync();
         var iteration = NewIteration();
         await store.InsertAsync(iteration, CancellationToken.None);
 
-        await store.CompleteAsync(iteration.IterationId, "Completed", [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], CancellationToken.None);
+        await store.CompleteAsync(
+            iteration.IterationId, "Completed", "Completed", [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], CancellationToken.None);
 
         var persisted = await store.GetByIdAsync(iteration.IterationId, CancellationToken.None);
         Assert.Equal("Completed", persisted!.State);
         Assert.Equal("Completed", persisted.Outcome);
+        Assert.Equal([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], persisted.StepsTraversed);
+        Assert.NotNull(persisted.CompletedAt);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_SetsStateOutcomeAndCompletedAt_ForTheFailedTerminalCase()
+    {
+        // CodeRabbit R1 finding #2: prior to the fix, no store method could persist State =
+        // "Failed" together with Outcome and CompletedAt in one write — this proves the unified
+        // terminal operation now can.
+        var store = await CreateStoreAsync();
+        var iteration = NewIteration();
+        await store.InsertAsync(iteration, CancellationToken.None);
+
+        await store.CompleteAsync(iteration.IterationId, "Failed", "Failed", [2, 3, 4], CancellationToken.None);
+
+        var persisted = await store.GetByIdAsync(iteration.IterationId, CancellationToken.None);
+        Assert.Equal("Failed", persisted!.State);
+        Assert.Equal("Failed", persisted.Outcome);
+        Assert.Equal([2, 3, 4], persisted.StepsTraversed);
         Assert.NotNull(persisted.CompletedAt);
     }
 
@@ -91,7 +112,7 @@ public class LoopIterationStoreTests
         var store = await CreateStoreAsync();
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => store.CompleteAsync(Guid.NewGuid(), "Completed", [2], CancellationToken.None));
+            () => store.CompleteAsync(Guid.NewGuid(), "Completed", "Completed", [2], CancellationToken.None));
     }
 
     [Fact]

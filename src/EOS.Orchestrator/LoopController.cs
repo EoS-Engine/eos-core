@@ -64,18 +64,32 @@ public sealed class LoopController(
         if (!EntryStepByTriggerSource.TryGetValue(trigger.TriggerSource, out var entryStep))
         {
             throw new ArgumentException(
-                $"'{trigger.TriggerSource}' is not one of the 8 in-scope Trigger Sources (§8).", nameof(trigger));
+                $"'{trigger.TriggerSource}' is not one of the 7 in-scope Trigger Sources (§8).", nameof(trigger));
         }
 
         var iterationId = Guid.NewGuid();
         var stepsTraversed = new List<int>();
 
         // Persist-before-publish (WP-027 R1 finding #4/#8's own established invariant): the
-        // iteration row exists before LoopIterationStarted is ever published.
+        // iteration row exists before LoopIterationStarted is ever published. If InsertAsync
+        // itself fails, there is no row yet to compensate — nothing further to do here.
         await loopIterationStore.InsertAsync(
             new LoopIteration(iterationId, trigger.TriggerSource, entryStep, "Triggered", [], null, DateTimeOffset.UtcNow, null),
             cancellationToken);
-        loopIterationStartedEventPublisher.PublishLoopIterationStarted(iterationId, trigger.TriggerSource, entryStep);
+
+        // Independent pre-review finding (post-R1): a LoopIterationStarted publish failure
+        // previously left the row stuck at "Triggered" forever, with no compensating write at
+        // all. Routed through the same compensating-Failed-write helper as step execution and
+        // terminal-completion failures below.
+        try
+        {
+            loopIterationStartedEventPublisher.PublishLoopIterationStarted(iterationId, trigger.TriggerSource, entryStep);
+        }
+        catch (Exception ex)
+        {
+            await PersistFailedTerminalStateAsync(iterationId, stepsTraversed, ex);
+            throw;
+        }
 
         string outcome;
         try
@@ -90,14 +104,47 @@ public sealed class LoopController(
                 _ => throw new InvalidOperationException($"No handling defined for entry step {entryStep}."),
             };
         }
-        catch
+        catch (Exception ex)
         {
-            await loopIterationStore.UpdateStateAsync(iterationId, "Failed", [.. stepsTraversed], cancellationToken);
+            await PersistFailedTerminalStateAsync(iterationId, stepsTraversed, ex);
             throw;
         }
 
-        await loopIterationStore.CompleteAsync(iterationId, outcome, [.. stepsTraversed], cancellationToken);
+        // Independent pre-review finding (post-R1): the successful terminal write was previously
+        // unprotected — a failure here left the row stuck at its last non-terminal state
+        // ("Executing" etc.) with no Failed marking. An already-successful iteration is never
+        // turned into Failed by anything other than this specific write itself failing.
+        try
+        {
+            await loopIterationStore.CompleteAsync(iterationId, "Completed", outcome, [.. stepsTraversed], cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await PersistFailedTerminalStateAsync(iterationId, stepsTraversed, ex);
+            throw;
+        }
+
         loopIterationCompletedEventPublisher.PublishLoopIterationCompleted(iterationId, [.. stepsTraversed], outcome);
+    }
+
+    /// <summary>
+    /// CodeRabbit R1 finding #3's compensating-write pattern, shared by every failure point in
+    /// <see cref="RunIterationAsync"/> (Started-publish failure, step-execution failure, and
+    /// successful-terminal-persistence failure): a non-cancellable token, since the original
+    /// failure may itself be the supplied token having been cancelled; the original exception is
+    /// rethrown unchanged by the caller on success, or preserved alongside a persistence failure
+    /// via <see cref="AggregateException"/> — never silently replaced.
+    /// </summary>
+    private async Task PersistFailedTerminalStateAsync(Guid iterationId, List<int> stepsTraversed, Exception originalException)
+    {
+        try
+        {
+            await loopIterationStore.CompleteAsync(iterationId, "Failed", "Failed", [.. stepsTraversed], CancellationToken.None);
+        }
+        catch (Exception persistFailure)
+        {
+            throw new AggregateException(originalException, persistFailure);
+        }
     }
 
     public async Task<LoopStatus> GetCurrentStatusAsync(CancellationToken cancellationToken = default)
@@ -129,8 +176,14 @@ public sealed class LoopController(
             RequestId: Guid.NewGuid(),
             CorrelationId: iterationId,
             Goal: trigger.SourcePayloadRef,
-            RequestingRole: trigger.TriggerSource);
-        stepsTraversed.Add(3); // Retrieve Context — see class doc comment: folded into ReasonAsync, no separate call.
+            RequestingRole: trigger.TriggerSource,
+            // Step 3 (Retrieve Context): supplying any non-null ReasoningContextScope is what
+            // actually triggers ReasoningEngine's own Context Assembly (ProcessContextAsync) —
+            // an unset ContextScope is a documented no-op there. No filters are known at this
+            // layer, so every field is left null; this is the minimal, honest way to invoke the
+            // existing mechanism without inventing scope data the Loop doesn't have.
+            ContextScope: new ReasoningContextScope(DomainTags: null, ProjectScope: null, Budget: null));
+        stepsTraversed.Add(3); // Retrieve Context — folded into ReasonAsync via ContextScope above, no separate call.
         var decisions = await reasoningEngineClient.ReasonAsync(reasoningRequest, cancellationToken);
         stepsTraversed.Add(4);
         stepsTraversed.Add(5); // Decision.RejectedHypotheses already carries this.
