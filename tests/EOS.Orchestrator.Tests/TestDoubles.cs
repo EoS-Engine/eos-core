@@ -278,10 +278,20 @@ internal sealed class ThrowingOnCompleteLoopIterationStore(ILoopIterationStore i
 
 internal sealed class RecordingLoopIterationStartedEventPublisher : ILoopIterationStartedEventPublisher
 {
+    // CodeRabbit R2: RunIterationAsync_TwoConcurrentCallsProduceTwoIndependentIterationIds calls
+    // PublishLoopIterationStarted from concurrent RunIterationAsync invocations — List<T>.Add is
+    // not thread-safe, so a plain list could lose an entry or corrupt its internal state.
+    private readonly Lock _lock = new();
+
     public List<(Guid IterationId, string TriggerSource, int EntryStep)> Published { get; } = [];
 
-    public void PublishLoopIterationStarted(Guid iterationId, string triggerSource, int entryStep) =>
-        Published.Add((iterationId, triggerSource, entryStep));
+    public void PublishLoopIterationStarted(Guid iterationId, string triggerSource, int entryStep)
+    {
+        lock (_lock)
+        {
+            Published.Add((iterationId, triggerSource, entryStep));
+        }
+    }
 }
 
 /// <summary>
