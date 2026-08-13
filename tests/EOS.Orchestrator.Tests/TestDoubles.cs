@@ -547,10 +547,14 @@ internal sealed class EvaluatedOrderingRecorder(ILoopIterationStore inner) : ILo
     public Task InsertAsync(LoopIteration iteration, CancellationToken cancellationToken = default) =>
         inner.InsertAsync(iteration, cancellationToken);
 
-    public Task UpdateStateAsync(Guid iterationId, string state, int[] stepsTraversed, CancellationToken cancellationToken = default)
+    public async Task UpdateStateAsync(Guid iterationId, string state, int[] stepsTraversed, CancellationToken cancellationToken = default)
     {
+        // CodeRabbit finding: record only after the delegated write actually completes, not at
+        // call-time — otherwise a future LoopController regression that fires this write without
+        // awaiting it would still produce the "correct" recorded order, defeating the point of
+        // this ordering proof.
+        await inner.UpdateStateAsync(iterationId, state, stepsTraversed, cancellationToken);
         ObservedOrder.Add(state);
-        return inner.UpdateStateAsync(iterationId, state, stepsTraversed, cancellationToken);
     }
 
     public Task CompleteAsync(
