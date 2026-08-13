@@ -206,12 +206,13 @@ internal sealed class NeverCalledPlanningClient : IPlanningClient
 }
 
 /// <summary>
-/// WP-029: records every submitted <see cref="Goal"/> instead of throwing — Improve (step 17) now
-/// unconditionally submits its own Quarterly-review Goal via <c>SubmitGoalAsync</c> for every
-/// completed iteration, so <see cref="NeverCalledPlanningClient"/>'s "never called" premise no
-/// longer holds for trigger paths that skip step 8. Used to prove exactly which Goal (if any) was
-/// submitted — the trigger-derived one (step 8) versus Improve's own (step 17) — by inspecting
-/// <see cref="SubmittedGoals"/>'s <c>Statement</c> values.
+/// WP-029: records every submitted <see cref="Goal"/> instead of throwing. Improve (step 17) may
+/// submit a Quarterly-review Goal via <c>SubmitGoalAsync</c>, but only when sustained decline is
+/// detected — never today, since <c>loop_health_score</c> is always null (Decision 1); this is
+/// intentional, specification-compliant behavior (§20.5), not a missing implementation. Used to
+/// prove exactly which Goal (if any) was submitted — the trigger-derived one (step 8) versus
+/// Improve's own (step 17) — by inspecting <see cref="SubmittedGoals"/>'s <c>Statement</c> and
+/// <c>SubmittedByActor</c> values.
 /// </summary>
 internal sealed class RecordingPlanningClient(Plan plan) : IPlanningClient
 {

@@ -25,6 +25,18 @@ public class OperationalModeStoreTests
         await command.ExecuteNonQueryAsync();
     }
 
+    // CodeRabbit finding: makes the table genuinely absent so a subsequent concurrent
+    // EnsureTableExistsAsync call actually exercises the IF NOT EXISTS guard's first-time-
+    // creation path, rather than every other test's already-created-table no-op path.
+    private static async Task DropTableIfExistsAsync()
+    {
+        await using var connection = new SqlConnection(TestConnectionString.SqlServer);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DROP TABLE IF EXISTS OperationalModeState";
+        await command.ExecuteNonQueryAsync();
+    }
+
     [Fact]
     public async Task GetCurrentModeAsync_ReturnsAssisted_WhenNoModeHasEverBeenPersisted()
     {
@@ -132,5 +144,34 @@ public class OperationalModeStoreTests
 
         var mode = await store.GetCurrentModeAsync(CancellationToken.None);
         Assert.True(mode is OperationalMode.Autonomous or OperationalMode.Safe);
+    }
+
+    [Fact]
+    public async Task EnsureTableExistsAsync_ConcurrentCallsAgainstAnAbsentTable_AllCompleteAndLeaveAUsableTable()
+    {
+        // CodeRabbit finding: every other test's CreateStoreAsync always completes
+        // EnsureTableExistsAsync before any concurrent operation starts, so the IF NOT EXISTS
+        // guard's own benign-race SqlException catch (ex.Number is 2705 or 1913 or 2714) was
+        // never actually exercised by a genuine concurrent first-time table creation. This test
+        // starts from a genuinely absent table and drives that exact path.
+        await DropTableIfExistsAsync();
+
+        var storeOne = new OperationalModeStore(TestConnectionString.SqlServer);
+        var storeTwo = new OperationalModeStore(TestConnectionString.SqlServer);
+        var storeThree = new OperationalModeStore(TestConnectionString.SqlServer);
+
+        // Genuine overlap (Task.WhenAll), not sequential — every concurrent call races on the
+        // same non-atomic IF NOT EXISTS guard; at most one CREATE TABLE actually succeeds, and
+        // the rest must recover via the benign-race catch rather than throwing or corrupting state.
+        await Task.WhenAll(
+            storeOne.EnsureTableExistsAsync(CancellationToken.None),
+            storeTwo.EnsureTableExistsAsync(CancellationToken.None),
+            storeThree.EnsureTableExistsAsync(CancellationToken.None));
+
+        // The table must be usable afterward through the store's own existing operations.
+        await ResetTableAsync();
+        Assert.Equal(OperationalMode.Assisted, await storeOne.GetCurrentModeAsync(CancellationToken.None));
+        await storeTwo.SetCurrentModeAsync(OperationalMode.Safe, CancellationToken.None);
+        Assert.Equal(OperationalMode.Safe, await storeThree.GetCurrentModeAsync(CancellationToken.None));
     }
 }
