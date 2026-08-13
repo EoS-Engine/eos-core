@@ -497,3 +497,93 @@ internal sealed class RecordingLoopIterationEvaluatedEventPublisher : ILoopItera
         }
     }
 }
+
+/// <summary>
+/// Claude Code Review finding fix: wraps a real <see cref="ILoopIterationStore"/>, delegating
+/// everything except <see cref="UpdateStateAsync"/> when called with <paramref name="throwingState"/>,
+/// which always throws — proves a failure inside <c>RunSelfEvaluateAndImproveAsync</c>'s own
+/// persistence writes (e.g. the "Improving" write) is compensated by the existing Failed-terminal-
+/// write pattern, and specifically that <c>LoopIterationEvaluated</c> is never published for an
+/// iteration that ultimately fails.
+/// </summary>
+internal sealed class ThrowingOnUpdateStateLoopIterationStore(ILoopIterationStore inner, string throwingState) : ILoopIterationStore
+{
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken = default) =>
+        inner.EnsureTableExistsAsync(cancellationToken);
+
+    public Task InsertAsync(LoopIteration iteration, CancellationToken cancellationToken = default) =>
+        inner.InsertAsync(iteration, cancellationToken);
+
+    public Task UpdateStateAsync(Guid iterationId, string state, int[] stepsTraversed, CancellationToken cancellationToken = default) =>
+        state == throwingState
+            ? throw new InvalidOperationException($"Simulated {throwingState} state-write failure.")
+            : inner.UpdateStateAsync(iterationId, state, stepsTraversed, cancellationToken);
+
+    public Task CompleteAsync(
+        Guid iterationId, string state, string outcome, int[] stepsTraversed, CancellationToken cancellationToken = default) =>
+        inner.CompleteAsync(iterationId, state, outcome, stepsTraversed, cancellationToken);
+
+    public Task<LoopIteration?> GetByIdAsync(Guid iterationId, CancellationToken cancellationToken = default) =>
+        inner.GetByIdAsync(iterationId, cancellationToken);
+
+    public Task<LoopIteration?> GetLatestAsync(CancellationToken cancellationToken = default) =>
+        inner.GetLatestAsync(cancellationToken);
+}
+
+/// <summary>
+/// Claude Code Review finding fix: wraps a real <see cref="ILoopIterationStore"/> and doubles as
+/// an <see cref="ILoopIterationEvaluatedEventPublisher"/>, recording both the state passed to every
+/// <see cref="UpdateStateAsync"/> call and each <c>LoopIterationEvaluated</c> publication into one
+/// shared, ordered list — proves the publish genuinely happens after the "Improving" write, not
+/// merely that both occurred somewhere during the run.
+/// </summary>
+internal sealed class EvaluatedOrderingRecorder(ILoopIterationStore inner) : ILoopIterationStore, ILoopIterationEvaluatedEventPublisher
+{
+    public List<string> ObservedOrder { get; } = [];
+
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken = default) =>
+        inner.EnsureTableExistsAsync(cancellationToken);
+
+    public Task InsertAsync(LoopIteration iteration, CancellationToken cancellationToken = default) =>
+        inner.InsertAsync(iteration, cancellationToken);
+
+    public Task UpdateStateAsync(Guid iterationId, string state, int[] stepsTraversed, CancellationToken cancellationToken = default)
+    {
+        ObservedOrder.Add(state);
+        return inner.UpdateStateAsync(iterationId, state, stepsTraversed, cancellationToken);
+    }
+
+    public Task CompleteAsync(
+        Guid iterationId, string state, string outcome, int[] stepsTraversed, CancellationToken cancellationToken = default) =>
+        inner.CompleteAsync(iterationId, state, outcome, stepsTraversed, cancellationToken);
+
+    public Task<LoopIteration?> GetByIdAsync(Guid iterationId, CancellationToken cancellationToken = default) =>
+        inner.GetByIdAsync(iterationId, cancellationToken);
+
+    public Task<LoopIteration?> GetLatestAsync(CancellationToken cancellationToken = default) =>
+        inner.GetLatestAsync(cancellationToken);
+
+    public void PublishLoopIterationEvaluated(Guid iterationId, double? loopHealthScore) => ObservedOrder.Add("LoopIterationEvaluated");
+}
+
+/// <summary>
+/// Claude Code Review finding fix: wraps a real <see cref="IOperationalModeStore"/>, counting
+/// <see cref="SetCurrentModeAsync"/> calls — proves <c>SetOperationalModeAsync</c>'s idempotency
+/// short-circuit genuinely skips the write for a no-op mode request, not merely the event.
+/// </summary>
+internal sealed class CallCountingOperationalModeStore(IOperationalModeStore inner) : IOperationalModeStore
+{
+    public int SetCurrentModeAsyncCallCount { get; private set; }
+
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken = default) =>
+        inner.EnsureTableExistsAsync(cancellationToken);
+
+    public Task<OperationalMode> GetCurrentModeAsync(CancellationToken cancellationToken = default) =>
+        inner.GetCurrentModeAsync(cancellationToken);
+
+    public Task<OperationalMode> SetCurrentModeAsync(OperationalMode mode, CancellationToken cancellationToken = default)
+    {
+        SetCurrentModeAsyncCallCount++;
+        return inner.SetCurrentModeAsync(mode, cancellationToken);
+    }
+}

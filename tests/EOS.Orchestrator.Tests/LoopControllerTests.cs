@@ -648,6 +648,44 @@ public class LoopControllerTests
     }
 
     [Fact]
+    public async Task SetOperationalModeAsync_RequestedModeEqualsCurrentMode_StillCallsProtection_ButSkipsWriteAndPublish()
+    {
+        // Claude Code Review finding fix: an idempotent request (mode already active) must not
+        // produce a spurious "changed" event describing no actual change, and must not perform an
+        // unnecessary persistence write — but Protection is still consulted for every request,
+        // idempotent or not; no exemption from Decision-Matrix governance exists for no-ops.
+        var recordingProtectionClient = new RecordingActionTypeProtectionClient(ProtectionVerdict.Allow);
+        var dispatchedTaskStore = new DispatchedTaskStore(TestConnectionString.SqlServer);
+        await dispatchedTaskStore.EnsureTableExistsAsync(CancellationToken.None);
+        var scheduler = new Scheduler(
+            dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
+            new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var executionCoordinator = new ExecutionCoordinator(
+            scheduler, dispatchedTaskStore, recordingProtectionClient, new RecordingTaskStartedEventPublisher());
+        var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
+        var iterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
+        await iterationStore.EnsureTableExistsAsync(CancellationToken.None);
+        var operationalModeStore = new CallCountingOperationalModeStore(await CreateOperationalModeStoreAsync());
+        var operationalModeChanged = new RecordingOperationalModeChangedEventPublisher();
+        var plan = new Plan(Guid.NewGuid(), Guid.NewGuid(), [], 1, 1.0, null);
+        var controller = new LoopController(
+            new FixedPlanningClient(plan), new FixedReasoningEngineClient(TestDecisions.Low()), recordingProtectionClient,
+            new FixedTierResourceManagementClient(CapacityTier.Safe), scheduler, executionCoordinator, progressMonitor,
+            iterationStore, new RecordingLoopIterationStartedEventPublisher(), new RecordingLoopIterationCompletedEventPublisher(),
+            operationalModeStore, operationalModeChanged, new RecordingLoopIterationEvaluatedEventPublisher());
+
+        // Default mode is Assisted (§22.2) — request that same mode.
+        var result = await controller.SetOperationalModeAsync(OperationalMode.Assisted, "test-operator", CancellationToken.None);
+
+        Assert.Equal(ProtectionVerdict.Allow, result.Verdict);
+        Assert.Single(recordingProtectionClient.ValidatedActions); // Protection was still called.
+        Assert.Equal("SetOperationalMode", recordingProtectionClient.ValidatedActions[0].ActionType);
+        Assert.Equal(0, operationalModeStore.SetCurrentModeAsyncCallCount); // No unnecessary write.
+        Assert.Equal(OperationalMode.Assisted, await operationalModeStore.GetCurrentModeAsync(CancellationToken.None));
+        Assert.Empty(operationalModeChanged.Published); // No spurious "changed" event.
+    }
+
+    [Fact]
     public async Task SetOperationalModeAsync_Deny_LeavesModeUnchanged_AndDoesNotPublish()
     {
         var (controller, _, _, _, operationalModeStore, operationalModeChanged, _) = await CreateStackAsync(
@@ -856,6 +894,79 @@ public class LoopControllerTests
 
         // Deciding, Executing (existing WP-028 writes), then Evaluating, Improving (WP-029).
         Assert.Equal(["Deciding", "Executing", "Evaluating", "Improving"], recordingStateStore.ObservedStates);
+    }
+
+    [Fact]
+    public async Task RunIterationAsync_PublishesLoopIterationEvaluated_OnlyAfterImprovingIsPersisted()
+    {
+        // Claude Code Review finding fix: LoopIterationEvaluated must be published only after
+        // BOTH Evaluating and Improving have been persisted and Improve's own logic has run —
+        // never before "Improving", mirroring LoopIterationCompleted's own persist-before-publish
+        // placement. Uses one shared ordered list across both the state-write calls and the
+        // event publish to prove genuine ordering, not merely that both eventually happened.
+        var dispatchedTaskStore = new DispatchedTaskStore(TestConnectionString.SqlServer);
+        await dispatchedTaskStore.EnsureTableExistsAsync(CancellationToken.None);
+        var scheduler = new Scheduler(
+            dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
+            new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var executionCoordinator = new ExecutionCoordinator(
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+        var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
+        var realIterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
+        await realIterationStore.EnsureTableExistsAsync(CancellationToken.None);
+        var orderingRecorder = new EvaluatedOrderingRecorder(realIterationStore);
+        var operationalModeStore = await CreateOperationalModeStoreAsync();
+        var plan = new Plan(Guid.NewGuid(), Guid.NewGuid(), [], 1, 1.0, null);
+        var controller = new LoopController(
+            new FixedPlanningClient(plan), new FixedReasoningEngineClient(TestDecisions.Low()), new AlwaysAllowProtectionClient(),
+            new FixedTierResourceManagementClient(CapacityTier.Safe), scheduler, executionCoordinator, progressMonitor,
+            orderingRecorder, new RecordingLoopIterationStartedEventPublisher(), new RecordingLoopIterationCompletedEventPublisher(),
+            operationalModeStore, new RecordingOperationalModeChangedEventPublisher(), orderingRecorder);
+
+        await controller.RunIterationAsync(new TriggerContext("UserRequest", "test goal"), CancellationToken.None);
+
+        Assert.Equal(["Deciding", "Executing", "Evaluating", "Improving", "LoopIterationEvaluated"], orderingRecorder.ObservedOrder);
+    }
+
+    [Fact]
+    public async Task RunIterationAsync_DoesNotPublishLoopIterationEvaluated_WhenTheImprovingStateWriteFails()
+    {
+        // Claude Code Review finding fix: proves LoopIterationEvaluated is genuinely NOT published
+        // when the "Improving" write fails — Evaluating (step 16) must already have succeeded for
+        // execution to even reach the throwing "Improving" write, but the iteration still ends up
+        // Failed via the existing compensating-write pattern, with Evaluated never sent.
+        var dispatchedTaskStore = new DispatchedTaskStore(TestConnectionString.SqlServer);
+        await dispatchedTaskStore.EnsureTableExistsAsync(CancellationToken.None);
+        var scheduler = new Scheduler(
+            dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
+            new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        var executionCoordinator = new ExecutionCoordinator(
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+        var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
+        var realIterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
+        await realIterationStore.EnsureTableExistsAsync(CancellationToken.None);
+        var throwingOnImprovingStore = new ThrowingOnUpdateStateLoopIterationStore(realIterationStore, "Improving");
+        var operationalModeStore = await CreateOperationalModeStoreAsync();
+        var plan = new Plan(Guid.NewGuid(), Guid.NewGuid(), [], 1, 1.0, null);
+        var started = new RecordingLoopIterationStartedEventPublisher();
+        var completed = new RecordingLoopIterationCompletedEventPublisher();
+        var evaluated = new RecordingLoopIterationEvaluatedEventPublisher();
+        var controller = new LoopController(
+            new FixedPlanningClient(plan), new FixedReasoningEngineClient(TestDecisions.Low()), new AlwaysAllowProtectionClient(),
+            new FixedTierResourceManagementClient(CapacityTier.Safe), scheduler, executionCoordinator, progressMonitor,
+            throwingOnImprovingStore, started, completed,
+            operationalModeStore, new RecordingOperationalModeChangedEventPublisher(), evaluated);
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => controller.RunIterationAsync(new TriggerContext("UserRequest", "test goal"), CancellationToken.None));
+        Assert.Equal("Simulated Improving state-write failure.", thrown.Message);
+
+        Assert.Empty(evaluated.Published);
+        Assert.Empty(completed.Published);
+        var persisted = await realIterationStore.GetByIdAsync(started.Published[0].IterationId, CancellationToken.None);
+        Assert.Equal("Failed", persisted!.State);
+        Assert.Equal("Failed", persisted.Outcome);
+        Assert.NotNull(persisted.CompletedAt);
     }
 
     [Fact]
