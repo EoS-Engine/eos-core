@@ -205,6 +205,31 @@ internal sealed class NeverCalledPlanningClient : IPlanningClient
         throw new NotSupportedException("Not used by WP-028's LoopController.");
 }
 
+/// <summary>
+/// WP-029: records every submitted <see cref="Goal"/> instead of throwing — Improve (step 17) now
+/// unconditionally submits its own Quarterly-review Goal via <c>SubmitGoalAsync</c> for every
+/// completed iteration, so <see cref="NeverCalledPlanningClient"/>'s "never called" premise no
+/// longer holds for trigger paths that skip step 8. Used to prove exactly which Goal (if any) was
+/// submitted — the trigger-derived one (step 8) versus Improve's own (step 17) — by inspecting
+/// <see cref="SubmittedGoals"/>'s <c>Statement</c> values.
+/// </summary>
+internal sealed class RecordingPlanningClient(Plan plan) : IPlanningClient
+{
+    public List<Goal> SubmittedGoals { get; } = [];
+
+    public Task<Plan> SubmitGoalAsync(Goal goal, CancellationToken cancellationToken = default)
+    {
+        SubmittedGoals.Add(goal);
+        return Task.FromResult(plan);
+    }
+
+    public Task<GoalStatus> GetGoalStatusAsync(string goalId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028/WP-029's LoopController.");
+
+    public Task CancelGoalAsync(string goalId, string reason, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Not used by WP-028/WP-029's LoopController.");
+}
+
 internal static class TestDecisions
 {
     public static Decision Low(double riskScore = 5) => new(
@@ -246,6 +271,45 @@ internal sealed class CancellingReasoningEngineClient(CancellationTokenSource ca
 
     public Task<Summary> SummarizeAsync(string content, int? sizeBudget = null, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException("Not used by WP-028's LoopController.");
+}
+
+/// <summary>
+/// WP-029: wraps a real <see cref="ILoopIterationStore"/>, recording every <c>state</c> value
+/// passed to <see cref="UpdateStateAsync"/> — proves the Evaluating/Improving transitions (§19.1,
+/// WP-028 Decision 4's reserved string values) are actually written, not just recorded as
+/// <c>stepsTraversed</c> entries (final-adversarial-review finding).
+/// </summary>
+internal sealed class RecordingStateTransitionsLoopIterationStore(ILoopIterationStore inner) : ILoopIterationStore
+{
+    private readonly Lock _lock = new();
+
+    public List<string> ObservedStates { get; } = [];
+
+    public Task EnsureTableExistsAsync(CancellationToken cancellationToken = default) =>
+        inner.EnsureTableExistsAsync(cancellationToken);
+
+    public Task InsertAsync(LoopIteration iteration, CancellationToken cancellationToken = default) =>
+        inner.InsertAsync(iteration, cancellationToken);
+
+    public Task UpdateStateAsync(Guid iterationId, string state, int[] stepsTraversed, CancellationToken cancellationToken = default)
+    {
+        lock (_lock)
+        {
+            ObservedStates.Add(state);
+        }
+
+        return inner.UpdateStateAsync(iterationId, state, stepsTraversed, cancellationToken);
+    }
+
+    public Task CompleteAsync(
+        Guid iterationId, string state, string outcome, int[] stepsTraversed, CancellationToken cancellationToken = default) =>
+        inner.CompleteAsync(iterationId, state, outcome, stepsTraversed, cancellationToken);
+
+    public Task<LoopIteration?> GetByIdAsync(Guid iterationId, CancellationToken cancellationToken = default) =>
+        inner.GetByIdAsync(iterationId, cancellationToken);
+
+    public Task<LoopIteration?> GetLatestAsync(CancellationToken cancellationToken = default) =>
+        inner.GetLatestAsync(cancellationToken);
 }
 
 /// <summary>
@@ -399,4 +463,36 @@ internal sealed class StateCapturingRollbackExecutedEventPublisher(DispatchedTas
 
     public void PublishRollbackExecuted(Guid taskId, string rollbackPathUsed) =>
         ObservedStatesAtPublishTime.Add(store.GetByIdAsync(taskId, CancellationToken.None).GetAwaiter().GetResult()!.State);
+}
+
+/// <summary>WP-029: thread-safe recorder for <c>OperationalModeChanged</c>, mirroring <see cref="RecordingLoopIterationStartedEventPublisher"/>'s lock-guarded precedent (CodeRabbit R2).</summary>
+internal sealed class RecordingOperationalModeChangedEventPublisher : IOperationalModeChangedEventPublisher
+{
+    private readonly Lock _lock = new();
+
+    public List<(OperationalMode FromMode, OperationalMode ToMode, string ChangedBy)> Published { get; } = [];
+
+    public void PublishOperationalModeChanged(OperationalMode fromMode, OperationalMode toMode, string changedBy)
+    {
+        lock (_lock)
+        {
+            Published.Add((fromMode, toMode, changedBy));
+        }
+    }
+}
+
+/// <summary>WP-029: thread-safe recorder for <c>LoopIterationEvaluated</c>, mirroring <see cref="RecordingLoopIterationStartedEventPublisher"/>'s lock-guarded precedent.</summary>
+internal sealed class RecordingLoopIterationEvaluatedEventPublisher : ILoopIterationEvaluatedEventPublisher
+{
+    private readonly Lock _lock = new();
+
+    public List<(Guid IterationId, double? LoopHealthScore)> Published { get; } = [];
+
+    public void PublishLoopIterationEvaluated(Guid iterationId, double? loopHealthScore)
+    {
+        lock (_lock)
+        {
+            Published.Add((iterationId, loopHealthScore));
+        }
+    }
 }
