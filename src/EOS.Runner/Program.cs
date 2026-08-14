@@ -438,14 +438,20 @@ try
     _ = replanRequestClient;
 
     // WP-028: Autonomous Engineering Loop — Core Cycle & Trigger Sources
-    // (Autonomous-Engineering-Loop-Specification-v1.0 §7/§8). LoopController sequences steps
-    // 1-15 and 18 only (16-17 Self-Evaluate/Improve are WP-029); every step cites an already-
-    // existing subsystem capability, verified against this repository, never invented. WP-028
-    // Decision 7 (locked): step 12 (Measure Outcomes) has no citable capability anywhere in this
-    // repository (no Reality Validation/Telemetry KPI mechanism is implemented) — recorded as
-    // traversed structurally only, never simulated.
+    // (Autonomous-Engineering-Loop-Specification-v1.0 §7/§8). LoopController sequences the full
+    // 18-step cycle (WP-029 added Self-Evaluate/Improve, steps 16-17); every step cites an
+    // already-existing subsystem capability, verified against this repository, never invented.
+    // WP-028 Decision 7 (locked): step 12 (Measure Outcomes) has no citable capability anywhere
+    // in this repository (no Reality Validation/Telemetry KPI mechanism is implemented) —
+    // recorded as traversed structurally only, never simulated.
     var loopIterationStore = new LoopIterationStore(connectionOptions.SqlServerConnectionString);
     await loopIterationStore.EnsureTableExistsAsync(CancellationToken.None);
+
+    // WP-029: Operational Modes, Human Governance & Self-Evaluation (§13/§14/§22) — mode
+    // selection/persistence/publication only (ADR-LOOP002: the Loop selects, Protection
+    // enforces); Self-Evaluate/Improve (steps 16-17) added to the existing 18-step cycle.
+    var operationalModeStore = new OperationalModeStore(connectionOptions.SqlServerConnectionString);
+    await operationalModeStore.EnsureTableExistsAsync(CancellationToken.None);
 
     var loopController = new LoopController(
         planningClient,
@@ -457,7 +463,10 @@ try
         progressMonitor,
         loopIterationStore,
         new EventMediatorLoopIterationStartedEventPublisher(eventMediator),
-        new EventMediatorLoopIterationCompletedEventPublisher(eventMediator));
+        new EventMediatorLoopIterationCompletedEventPublisher(eventMediator),
+        operationalModeStore,
+        new EventMediatorOperationalModeChangedEventPublisher(eventMediator),
+        new EventMediatorLoopIterationEvaluatedEventPublisher(eventMediator));
 
     // CodeRabbit R1 finding #4: EventMediator.Publish invokes every subscriber directly and does
     // not isolate exceptions between them — without a handler-local boundary, a RunIterationAsync
@@ -1385,6 +1394,39 @@ internal sealed class EventMediatorLoopIterationCompletedEventPublisher(EventMed
         eventMediator.Publish(EventEnvelope<LoopIterationCompletedPayload>.Create(
             eventType: "LoopIterationCompleted", version: "v1", producer: "EOS.Orchestrator",
             payload: new LoopIterationCompletedPayload(iterationId, stepsTraversed, outcome)));
+    }
+}
+
+// WP-029: Autonomous-Engineering-Loop-Specification-v1.0 §17's two further new events —
+// payloads frozen exactly as specified. OperationalModeChanged's own consumer list names
+// "Protection Layer (Runtime Policy update)" — no such subscription exists anywhere in
+// EOS.Gates today (WP-029 Decision 4: enforcement/mapping is explicitly deferred, not
+// implemented here); this event is published regardless of the absence of a live consumer,
+// matching this file's own established precedent for events with no current subscriber.
+internal sealed record OperationalModeChangedPayload(OperationalMode FromMode, OperationalMode ToMode, string ChangedBy);
+
+internal sealed class EventMediatorOperationalModeChangedEventPublisher(EventMediator eventMediator) : IOperationalModeChangedEventPublisher
+{
+    public void PublishOperationalModeChanged(OperationalMode fromMode, OperationalMode toMode, string changedBy)
+    {
+        eventMediator.Publish(EventEnvelope<OperationalModeChangedPayload>.Create(
+            eventType: "OperationalModeChanged", version: "v1", producer: "EOS.Orchestrator",
+            payload: new OperationalModeChangedPayload(fromMode, toMode, changedBy)));
+    }
+}
+
+// WP-029 Decision 1 (locked): LoopHealthScore is unconditionally null — no aggregation formula
+// exists for the five KPI families (§13.1) in this repository; see LoopController's own doc
+// comment on RunSelfEvaluateAndImproveAsync for the full citation of what is/is not available.
+internal sealed record LoopIterationEvaluatedPayload(Guid IterationId, double? LoopHealthScore);
+
+internal sealed class EventMediatorLoopIterationEvaluatedEventPublisher(EventMediator eventMediator) : ILoopIterationEvaluatedEventPublisher
+{
+    public void PublishLoopIterationEvaluated(Guid iterationId, double? loopHealthScore)
+    {
+        eventMediator.Publish(EventEnvelope<LoopIterationEvaluatedPayload>.Create(
+            eventType: "LoopIterationEvaluated", version: "v1", producer: "EOS.Orchestrator",
+            payload: new LoopIterationEvaluatedPayload(iterationId, loopHealthScore)));
     }
 }
 

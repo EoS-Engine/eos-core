@@ -43,7 +43,10 @@ public sealed class LoopController(
     ProgressMonitor progressMonitor,
     ILoopIterationStore loopIterationStore,
     ILoopIterationStartedEventPublisher loopIterationStartedEventPublisher,
-    ILoopIterationCompletedEventPublisher loopIterationCompletedEventPublisher) : ILoopControlClient
+    ILoopIterationCompletedEventPublisher loopIterationCompletedEventPublisher,
+    IOperationalModeStore operationalModeStore,
+    IOperationalModeChangedEventPublisher operationalModeChangedEventPublisher,
+    ILoopIterationEvaluatedEventPublisher loopIterationEvaluatedEventPublisher) : ILoopControlClient
 {
     // WP-028 Decision 6: TriggerContext.TriggerSource is a free-form string; this is the
     // authoritative, closed mapping to §8's entry steps — File/Git Events are permanently
@@ -110,6 +113,23 @@ public sealed class LoopController(
             throw;
         }
 
+        // Steps 16 (Self-Evaluate) + 17 (Improve) — WP-029, §13. Run once per successfully
+        // completed iteration, independent of which entry-step path produced the completion
+        // (§13.1: "on loop_iteration_complete(iteration)" has no entry-step precondition), and
+        // regardless of whether outcome is "Completed" or "Denied" — a Denied iteration is still
+        // a legitimate completed iteration (see the Protection Invariant comment above), never a
+        // Failure Strategy (§23) case. Routed through the same compensating-Failed-write pattern
+        // as every other failure point in this method.
+        try
+        {
+            await RunSelfEvaluateAndImproveAsync(iterationId, stepsTraversed, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await PersistFailedTerminalStateAsync(iterationId, stepsTraversed, ex);
+            throw;
+        }
+
         // Independent pre-review finding (post-R1): the successful terminal write was previously
         // unprotected — a failure here left the row stuck at its last non-terminal state
         // ("Executing" etc.) with no Failed marking. An already-successful iteration is never
@@ -125,6 +145,92 @@ public sealed class LoopController(
         }
 
         loopIterationCompletedEventPublisher.PublishLoopIterationCompleted(iterationId, [.. stepsTraversed], outcome);
+    }
+
+    /// <summary>
+    /// Autonomous-Engineering-Loop-Specification-v1.0 §22.9 — every Operational Mode change is
+    /// itself a Decision-Matrix-governed action, routed through the exact same
+    /// <see cref="IProtectionClient.Validate"/> gate as any other action; the Loop never
+    /// manufactures an <see cref="ProtectionVerdict.Allow"/> result itself (WP-029 Decision 4).
+    /// On <c>Allow</c>, the new mode is persisted and <c>OperationalModeChanged</c> (§17) is
+    /// published; on any other verdict, the current mode is left untouched. If persistence
+    /// succeeds but publication fails, the persisted mode remains authoritative (never rolled
+    /// back) and the publication failure propagates unchanged to the caller.
+    ///
+    /// CodeRabbit pre-merge P1 finding #1 fix: <c>RiskScore: 100</c> is used, not an arbitrary
+    /// low value — verified directly against <c>EOS.Gates.RiskEngine.ClassifyTier</c>'s own real,
+    /// frozen thresholds (<c>LowTierMaxRiskScore = 30</c>, <c>MediumTierMaxRiskScore = 70</c>):
+    /// any score in (70, 100] resolves to <c>RiskTier.High</c>, and
+    /// <c>EOS.Gates.ProtectionGate.ValidateHighTier</c> is the only tier that invokes
+    /// <c>ApprovalEngine.Resolve</c> (the Decision Matrix, Constitution §0.6/§10.4) —
+    /// <c>ValidateLowTier</c> "is async-log only, never blocks" (that class's own comment), which
+    /// would silently defeat §22.9's "a mode change is itself a Decision-Matrix-governed action"
+    /// requirement against the real Protection implementation despite technically calling
+    /// <c>Validate</c>. This is a single fixed constant, not a per-mode risk calculation, a
+    /// <c>RuntimePolicy</c>, or a <c>PolicyProfile</c> — <c>EOS.Gates</c> itself is untouched. Every
+    /// request is validated identically regardless of whether it will turn out to be a no-op
+    /// (below) — idempotent requests are never exempted from Decision-Matrix governance.
+    ///
+    /// Claude Code Review finding fix: when the requested mode already equals the currently
+    /// persisted mode, no state write and no <c>OperationalModeChanged</c> publication occur — an
+    /// idempotent request must not produce a "changed" event describing no actual change. The
+    /// read used for this short-circuit check is best-effort only (it does not need to be atomic
+    /// with the write, since it can never cause an incorrect write or an incorrect event payload —
+    /// at worst a genuine concurrent change is missed by this check and the write/publish below
+    /// still runs normally). It is never used as the published event's <c>from_mode</c>: that
+    /// value still comes exclusively from <c>SetCurrentModeAsync</c>'s own atomic return (below),
+    /// preserving CodeRabbit pre-merge P1 finding #2's fix.
+    /// </summary>
+    public async Task<ValidationResult> SetOperationalModeAsync(
+        OperationalMode mode, string requestedBy, CancellationToken cancellationToken = default)
+    {
+        var validation = protectionClient.Validate(new ActionRequest(
+            ActionId: Guid.NewGuid(),
+            ActionType: "SetOperationalMode",
+            Actor: requestedBy,
+            RiskScore: 100));
+
+        if (validation.Verdict != ProtectionVerdict.Allow)
+        {
+            return validation;
+        }
+
+        var currentMode = await operationalModeStore.GetCurrentModeAsync(cancellationToken);
+        if (currentMode == mode)
+        {
+            return validation;
+        }
+
+        // CodeRabbit pre-merge P1 finding #2 fix: the previous mode published as from_mode is
+        // obtained atomically from this same write (IOperationalModeStore.SetCurrentModeAsync's
+        // own doc comment) — never from the best-effort idempotency-check read above.
+        var fromMode = await operationalModeStore.SetCurrentModeAsync(mode, cancellationToken);
+        operationalModeChangedEventPublisher.PublishOperationalModeChanged(fromMode, mode, requestedBy);
+
+        return validation;
+    }
+
+    /// <summary>
+    /// Autonomous-Engineering-Loop-Specification-v1.0 §14.4 — identical to Protection Layer's own
+    /// Emergency Shutdown (Protection-Layer-Specification-v1.0 §26.1); delegates entirely to the
+    /// existing <c>EmergencyShutdownState</c> mechanism via the same <see cref="IProtectionClient.Validate"/>
+    /// gate every other action already uses — no second, competing emergency-stop implementation
+    /// exists in this class (WP-029 Decision 4). <paramref name="reason"/> mirrors the frozen
+    /// pseudocode's <c>emergency_stop(requested_by, reason)</c> signature for interface fidelity;
+    /// the existing, unmodified <see cref="ActionRequest"/> has no field to carry it, so it is not
+    /// threaded into the Protection call — a disclosed limitation, not a silent drop.
+    /// </summary>
+    public Task<ValidationResult> EmergencyStopAsync(
+        string requestedBy, string reason, CancellationToken cancellationToken = default)
+    {
+        _ = reason;
+        var validation = protectionClient.Validate(new ActionRequest(
+            ActionId: Guid.NewGuid(),
+            ActionType: "EmergencyShutdown",
+            Actor: requestedBy,
+            RiskScore: 0));
+
+        return Task.FromResult(validation);
     }
 
     /// <summary>
@@ -150,9 +256,81 @@ public sealed class LoopController(
     public async Task<LoopStatus> GetCurrentStatusAsync(CancellationToken cancellationToken = default)
     {
         var latest = await loopIterationStore.GetLatestAsync(cancellationToken);
-        // WP-028 Decision 2: CurrentMode is always Assisted (mode switching is WP-029);
-        // LoopHealthScore is always null (Self-Evaluate is WP-029).
-        return new LoopStatus(latest?.IterationId, OperationalMode.Assisted, LoopHealthScore: null);
+        var currentMode = await operationalModeStore.GetCurrentModeAsync(cancellationToken);
+        // WP-029 Decision 1 (locked): LoopHealthScore is unconditionally null — no aggregation
+        // formula exists for combining the five KPI families (§13.1), and none is invented here.
+        return new LoopStatus(latest?.IterationId, currentMode, LoopHealthScore: null);
+    }
+
+    /// <summary>
+    /// Steps 16 (Self-Evaluate) + 17 (Improve) — Autonomous-Engineering-Loop-Specification-v1.0
+    /// §13. WP-029 Decision 1 (locked): none of the five KPI families §13.1 names has a queryable
+    /// capability anywhere in this repository (verified directly, not assumed) — Goal Completion
+    /// Rate/Execution Success Rate (Planning-Execution-Engine-Specification-v1.0 §28), Decision/
+    /// Confidence Accuracy (Reasoning-Engine-Specification-v1.0 §25), Pipeline Throughput/Stall
+    /// Rate (Learning-Engine-Specification-v1.1 §33), False Positive/Negative Rate (Protection-
+    /// Layer-Specification-v1.0 §30), Resource Contention Rate (Resource-Management-Specification-
+    /// v1.0 §28). No aggregation formula exists in any approved document for combining even a
+    /// partially-available subset. <c>loop_health_score</c> is therefore unconditionally
+    /// <c>null</c> — never a partial score, never an estimate, never a placeholder value —
+    /// deferred to a future approved ADR/specification revision (WP-029 Decision 1).
+    ///
+    /// Claude Code Review finding fix: <c>LoopIterationEvaluated</c> is now published only after
+    /// both the <c>"Evaluating"</c> and <c>"Improving"</c> state writes and Improve's own logic
+    /// have all completed successfully — matching <c>LoopIterationCompleted</c>'s own persist-
+    /// before-publish placement (published only once the phase it describes has actually
+    /// finished). If the <c>"Improving"</c> write or <c>SubmitGoalAsync</c> throws, this method's
+    /// exception propagates to <see cref="RunIterationAsync"/>'s compensating-Failed-write handler
+    /// before <c>LoopIterationEvaluated</c> is ever published — an iteration that ends up marked
+    /// <c>Failed</c> can no longer have already emitted an "Evaluated" event for itself.
+    /// </summary>
+    private async Task RunSelfEvaluateAndImproveAsync(Guid iterationId, List<int> stepsTraversed, CancellationToken cancellationToken)
+    {
+        // §19.1's Loop Iteration Lifecycle names Evaluating/Improving as the states between
+        // Learning and Completed — WP-028 Decision 4 deliberately kept LoopIteration.State a
+        // plain string (not an enum) specifically so WP-029 could write these exact values with
+        // no type/schema change (final-adversarial-review finding: these transitions were
+        // previously never written, even though stepsTraversed already recorded 16/17 — the
+        // persisted state timeline silently skipped straight to Completed).
+        await loopIterationStore.UpdateStateAsync(iterationId, "Evaluating", [.. stepsTraversed], cancellationToken);
+        stepsTraversed.Add(16);
+
+        // Step 17 (Improve, §13.2/§20.5): §20.5's own sequence diagram places submit_goal inside
+        // an "alt sustained decline detected" guard — it is NOT called on every completed
+        // iteration (final-adversarial-review correction; the prior unconditional call was a
+        // misreading of §13.2's prose in isolation). "Planning-->>Loop: scheduled per each
+        // subsystem's own Quarterly-cycle process" (§20.5) places the Quarterly calendar boundary
+        // entirely inside Planning's own responsibility once a Goal is submitted — the Loop only
+        // ever decides WHETHER to submit, never WHEN in calendar terms, and owns no cadence
+        // tracking of its own.
+        //
+        // WP-029 Decision 1 (locked): loop_health_score is unconditionally null (no KPI
+        // aggregation capability exists in this repository). A "sustained decline" is a comparison
+        // over a history of measured scores; with every measurement always null, no decline can
+        // ever be detected. sustainedDeclineDetected is therefore always false today, and
+        // SubmitGoalAsync is correctly never called — not a suppressed feature, not a workaround,
+        // but the literal, correct realization of §20.5's guard given this repository's current,
+        // honestly-disclosed KPI unavailability. A future WP that gives loop_health_score a real,
+        // non-null history can make this guard reachable without this method's Quarterly-
+        // scheduling responsibility (owned by Planning, per §20.5) ever changing.
+        await loopIterationStore.UpdateStateAsync(iterationId, "Improving", [.. stepsTraversed], cancellationToken);
+        stepsTraversed.Add(17);
+        var sustainedDeclineDetected = false; // Always false: no loop_health_score history exists (D1) to detect a decline from.
+        if (sustainedDeclineDetected)
+        {
+            await planningClient.SubmitGoalAsync(
+                new Goal(
+                    GoalId: Guid.NewGuid(),
+                    Statement: "Quarterly recalibration/review (Autonomous-Engineering-Loop-Specification-v1.0 §13.2)",
+                    ParentGoalId: null,
+                    DomainTags: [],
+                    SubmittedByActor: "AutonomousEngineeringLoop",
+                    State: GoalLifecycleState.Proposed,
+                    PlanId: null),
+                cancellationToken);
+        }
+
+        loopIterationEvaluatedEventPublisher.PublishLoopIterationEvaluated(iterationId, loopHealthScore: null);
     }
 
     /// <summary>
