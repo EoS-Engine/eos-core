@@ -67,14 +67,47 @@ public sealed class SqlEventStore(string connectionString)
             return null;
         }
 
-        return new StoredEvent(
-            EventId: reader.GetGuid(0),
-            EventType: reader.GetString(1),
-            Version: reader.GetString(2),
-            Producer: reader.GetString(3),
-            CorrelationId: reader.GetGuid(4),
-            CausationId: reader.IsDBNull(5) ? null : reader.GetGuid(5),
-            OccurredAt: reader.GetDateTimeOffset(6),
-            PayloadJson: reader.GetString(7));
+        return ReadCurrentRow(reader);
     }
+
+    /// <summary>
+    /// WP-030: minimal recent-event query capability for the Dashboard's "recent events"
+    /// projection — the one piece of Dashboard data that genuinely needs event history rather
+    /// than current-state store queries. Deterministic ordering (matching
+    /// <c>LoopIterationStore.GetLatestAsync</c>'s own established <c>OccurredAt</c>-plus-tie-
+    /// breaker precedent): most recent first, <c>EventId</c> as the stable tie-breaker for
+    /// events sharing the same <c>OccurredAt</c> value.
+    /// </summary>
+    public async Task<IReadOnlyList<StoredEvent>> GetRecentAsync(int count, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT TOP (@Count) EventId, EventType, Version, Producer, CorrelationId, CausationId, OccurredAt, PayloadJson
+            FROM EventStore
+            ORDER BY OccurredAt DESC, EventId DESC
+            """;
+        command.Parameters.AddWithValue("@Count", count);
+
+        var results = new List<StoredEvent>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(ReadCurrentRow(reader));
+        }
+
+        return results;
+    }
+
+    private static StoredEvent ReadCurrentRow(SqlDataReader reader) => new(
+        EventId: reader.GetGuid(0),
+        EventType: reader.GetString(1),
+        Version: reader.GetString(2),
+        Producer: reader.GetString(3),
+        CorrelationId: reader.GetGuid(4),
+        CausationId: reader.IsDBNull(5) ? null : reader.GetGuid(5),
+        OccurredAt: reader.GetDateTimeOffset(6),
+        PayloadJson: reader.GetString(7));
 }

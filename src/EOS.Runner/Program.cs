@@ -1,4 +1,5 @@
 using EOS.AIProvider;
+using EOS.Dashboard;
 using EOS.Gates;
 using EOS.Infrastructure;
 using EOS.Contracts;
@@ -14,9 +15,11 @@ using EOS.Runner.Commands;
 using EOS.SDK;
 using EOS.SharedKernel.Configuration;
 using EOS.VectorStore;
+using EOS.Web;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 var host = Host.CreateApplicationBuilder(args).Build();
 var bootstrapLogger = host.Services.GetRequiredService<ILogger<BootstrapRunner>>();
@@ -30,7 +33,7 @@ if (results.Count == 0 || !results.All(r => r.Status))
     return 1;
 }
 
-if (args is not ["ask", _] and not ["compress"])
+if (args is not ["ask", _] and not ["compress"] and not ["web"])
 {
     return 0;
 }
@@ -39,6 +42,7 @@ var providersOptions = loader.Load<ProvidersOptions>("Providers.json");
 var inferenceOptions = loader.Load<InferenceOptions>("Inference.json");
 var thresholdsOptions = loader.Load<ThresholdsOptions>("Thresholds.json");
 var knowledgeOptions = loader.Load<KnowledgeOptions>("Knowledge.json");
+var dashboardOptions = loader.Load<DashboardOptions>("Dashboard.json");
 
 var providerProfiles = providersOptions.Providers
     .Select(provider => new ProviderProfile(
@@ -468,6 +472,34 @@ try
         new EventMediatorOperationalModeChangedEventPublisher(eventMediator),
         new EventMediatorLoopIterationEvaluatedEventPublisher(eventMediator));
 
+    // WP-030: SqlEventStore live-publish wiring — WP-004's originally deferred persistence sink
+    // (WP-004-Implementation-Plan.md: "a future WP once a real event needs durable persistence")
+    // — now wired for exactly the 7 event types the WP-030 Implementation Plan approved for
+    // Dashboard "recent events" persistence. EventMediator itself is unmodified; this is a plain
+    // additional subscriber, mirroring every other EventMediator.Subscribe call in this file.
+    var sqlEventStore = new SqlEventStore(connectionOptions.SqlServerConnectionString);
+    await sqlEventStore.EnsureTableExistsAsync(CancellationToken.None);
+
+    void PersistEvent<TPayload>(EventEnvelope<TPayload> envelope) =>
+        sqlEventStore.AppendAsync(StoredEventMapper.ToStoredEvent(envelope), CancellationToken.None).GetAwaiter().GetResult();
+
+    eventMediator.Subscribe<LoopIterationStartedPayload>(PersistEvent);
+    eventMediator.Subscribe<LoopIterationCompletedPayload>(PersistEvent);
+    eventMediator.Subscribe<LoopIterationEvaluatedPayload>(PersistEvent);
+    eventMediator.Subscribe<OperationalModeChangedPayload>(PersistEvent);
+    eventMediator.Subscribe<GoalCreatedPayload>(PersistEvent);
+    eventMediator.Subscribe<TaskCreatedPayload>(PersistEvent);
+    eventMediator.Subscribe<TaskStartedPayload>(PersistEvent);
+
+    // WP-030: composition-root adapters for the Dashboard's approved read interfaces
+    // (EOS.Contracts, WP030-02). EOS.Dashboard itself never references these implementation
+    // types (Constitution §0.11/R-04) — EOS.Web (WP030-05) is the first live consumer. Goal
+    // lifecycle status remains deferred (WP030-02/03 decision); no adapter exists for it.
+    ILoopStatusQueryClient loopStatusQueryClient = new LoopControllerLoopStatusQueryClient(loopController);
+    ITaskStatusQueryClient taskStatusQueryClient = new DispatchedTaskStoreTaskStatusQueryClient(dispatchedTaskStore);
+    IRecentEventsQueryClient recentEventsQueryClient = new SqlEventStoreRecentEventsQueryClient(sqlEventStore);
+    var dashboardQueryService = new DashboardQueryService(loopStatusQueryClient, taskStatusQueryClient, recentEventsQueryClient);
+
     // CodeRabbit R1 finding #4: EventMediator.Publish invokes every subscriber directly and does
     // not isolate exceptions between them — without a handler-local boundary, a RunIterationAsync
     // failure would propagate back through Publish and abort the unrelated subsystem operation
@@ -515,6 +547,12 @@ try
     // KnowledgeDriftDetected above, this will not fire until a future WP adds one.
     eventMediator.Subscribe<TaskBlockedPayload>(envelope =>
         RunLoopIterationSafely(new TriggerContext("Failure", envelope.Payload.TaskId.ToString())));
+
+    if (args is ["web"])
+    {
+        await DashboardWebHost.RunAsync(dashboardQueryService, dashboardOptions, args);
+        return 0;
+    }
 
     if (args is ["compress"])
     {
@@ -1039,6 +1077,58 @@ internal sealed class GoalStoreGoalPlanQueryClient(GoalStore goalStore) : IGoalP
 {
     public async Task<Guid?> GetCurrentPlanIdAsync(Guid goalId, CancellationToken cancellationToken = default) =>
         (await goalStore.GetByIdAsync(goalId, cancellationToken))?.PlanId;
+}
+
+// WP-030: EventEnvelope<TPayload> -> StoredEvent mapping, extracted to a small named, testable
+// unit rather than left inline in the Program.cs top-level statements (which cannot be unit
+// tested directly). Serializes only Payload -> PayloadJson, per this repository's existing
+// JsonSerializer.Serialize convention (e.g. KnowledgeGraphStore/PipelineRecordStore) — no custom
+// options, matching every other call site.
+internal static class StoredEventMapper
+{
+    public static StoredEvent ToStoredEvent<TPayload>(EventEnvelope<TPayload> envelope) => new(
+        envelope.EventId,
+        envelope.EventType,
+        envelope.Version,
+        envelope.Producer,
+        envelope.CorrelationId,
+        envelope.CausationId,
+        envelope.OccurredAt,
+        JsonSerializer.Serialize(envelope.Payload));
+}
+
+// WP-030: Dashboard's ILoopStatusQueryClient (EOS.Contracts, WP030-02) narrows ILoopControlClient
+// to its read-only member — LoopController already implements the exact composition
+// (LoopIterationStore.GetLatestAsync + OperationalModeStore.GetCurrentModeAsync -> LoopStatus,
+// WP-028/WP-029 Decision 1), so this delegates rather than re-deriving that logic a second time.
+internal sealed class LoopControllerLoopStatusQueryClient(ILoopControlClient loopControlClient) : ILoopStatusQueryClient
+{
+    public Task<LoopStatus> GetCurrentStatusAsync(CancellationToken cancellationToken = default) =>
+        loopControlClient.GetCurrentStatusAsync(cancellationToken);
+}
+
+// WP-030: Dashboard's ITaskStatusQueryClient (EOS.Contracts, WP030-02) — direct delegation to
+// DispatchedTaskStore's existing GetByStateAsync/CountByStateAsync, without exposing that
+// store's own write method (UpsertAsync) to Dashboard.
+internal sealed class DispatchedTaskStoreTaskStatusQueryClient(DispatchedTaskStore dispatchedTaskStore) : ITaskStatusQueryClient
+{
+    public Task<IReadOnlyList<DispatchedTask>> GetByStateAsync(TaskLifecycleState state, CancellationToken cancellationToken = default) =>
+        dispatchedTaskStore.GetByStateAsync(state, cancellationToken);
+
+    public Task<int> CountByStateAsync(TaskLifecycleState state, CancellationToken cancellationToken = default) =>
+        dispatchedTaskStore.CountByStateAsync(state, cancellationToken);
+}
+
+// WP-030: Dashboard's IRecentEventsQueryClient (EOS.Contracts, WP030-02) — maps SqlEventStore's
+// StoredEvent (EOS.Infrastructure) to the boundary-safe RecentEventSummary DTO (EOS.Contracts),
+// dropping Version/CorrelationId/CausationId per the approved WP030-02 amendment.
+internal sealed class SqlEventStoreRecentEventsQueryClient(SqlEventStore sqlEventStore) : IRecentEventsQueryClient
+{
+    public async Task<IReadOnlyList<RecentEventSummary>> GetRecentAsync(int count, CancellationToken cancellationToken = default)
+    {
+        var storedEvents = await sqlEventStore.GetRecentAsync(count, cancellationToken);
+        return [.. storedEvents.Select(e => new RecentEventSummary(e.EventId, e.EventType, e.Producer, e.OccurredAt, e.PayloadJson))];
+    }
 }
 
 // WP-024: TaskStarted's first real producer — reuses the exact pre-existing TaskStartedPayload
