@@ -287,6 +287,22 @@ public class BackupScriptTests
         Assert.Equal(keepDaily.Length + 1 /* bucket1 */ + 1 /* bucket2 */ + 1 /* bucket4 */ + 1 /* today's new archive */, remaining.Count);
     }
 
+    // --- Hardening fix: retention must ignore unrelated files rather than crash or delete them ---
+
+    [Fact]
+    public async Task Retention_IgnoresAndNeverDeletesAFileThatDoesNotMatchTheBackupNamingConvention()
+    {
+        using var env = new IsolatedEnvironment();
+        var unrelatedFile = Path.Combine(env.Destination, "eos-backup-manual.tar.gz");
+        File.WriteAllText(unrelatedFile, "not produced by this script");
+
+        var (exitCode, _, stdErr) = await RunScriptAsync(env.ScriptPath, env.DataDir, env.Destination);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, stdErr.Trim());
+        Assert.True(File.Exists(unrelatedFile));
+    }
+
     // --- F. Repeated execution ---
 
     [Fact]

@@ -204,6 +204,59 @@ public class RestoreDrillTests
         Assert.Equal(storageJsonBefore, storageJsonAfter);
     }
 
+    // --- Hardening fix: the script must never delete a pre-existing, operator-supplied directory ---
+
+    [Fact]
+    public async Task PreExistingDrillRoot_IsNeverDeletedAndCausesAFastFailure()
+    {
+        var archive = await BuildSyntheticBackupArchiveAsync("preexisting-root");
+        var drillRoot = Path.Combine(Path.GetTempPath(), $"eos-drill-preexisting-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(drillRoot);
+        var markerFile = Path.Combine(drillRoot, "operator-owned-marker.txt");
+        File.WriteAllText(markerFile, "must survive");
+
+        try
+        {
+            var (exitCode, _, stdErr) = await RunAsync("bash", [RestoreDrillScript, archive, drillRoot]);
+
+            Assert.NotEqual(0, exitCode);
+            Assert.NotEqual(3, exitCode); // distinct from the "missing/unreadable archive" exit code
+            Assert.Contains("already exists", stdErr, StringComparison.OrdinalIgnoreCase);
+            Assert.True(Directory.Exists(drillRoot));
+            Assert.True(File.Exists(markerFile));
+            Assert.Equal("must survive", File.ReadAllText(markerFile));
+        }
+        finally
+        {
+            File.Delete(archive);
+            Directory.Delete(Path.GetDirectoryName(archive)!, recursive: true);
+            Directory.Delete(drillRoot, recursive: true);
+        }
+    }
+
+    // --- Hardening fix: credentials must never appear in restore-drill output ---
+
+    [Fact]
+    public void RedactSensitiveContent_StripsPasswordAndPwdValuesCaseInsensitively()
+    {
+        var message = "Login failed. Server=localhost,14330;Database=master;User Id=sa;Password=Sup3rSecret!;TrustServerCertificate=True";
+
+        var redacted = EOS.RestoreDrill.RestoreDrillRunner.RedactSensitiveContent(message);
+
+        Assert.NotNull(redacted);
+        Assert.DoesNotContain("Sup3rSecret!", redacted, StringComparison.Ordinal);
+        Assert.Contains("Password=***", redacted, StringComparison.Ordinal);
+
+        var pwdVariant = EOS.RestoreDrill.RestoreDrillRunner.RedactSensitiveContent("pwd=AnotherSecret;Server=x");
+        Assert.DoesNotContain("AnotherSecret", pwdVariant, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RedactSensitiveContent_ReturnsNullForNullInput()
+    {
+        Assert.Null(EOS.RestoreDrill.RestoreDrillRunner.RedactSensitiveContent(null));
+    }
+
     // --- E. Compose isolation (static file inspection, no Docker required) ---
 
     [Fact]

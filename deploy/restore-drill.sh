@@ -28,6 +28,7 @@ COMPOSE_FILE="$SCRIPT_DIR/docker-compose.restore-drill.yml"
 COMPOSE_PROJECT="eos-restore-drill"
 
 COMPOSE_STARTED=0
+DRILL_ROOT_CREATED=0
 
 cleanup() {
     if [ "$COMPOSE_STARTED" -eq 1 ]; then
@@ -36,7 +37,11 @@ cleanup() {
             docker compose -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT" down --volumes >/dev/null 2>&1 || true
     fi
 
-    if [ -d "$DRILL_ROOT" ]; then
+    # Safety invariant: this script must never recursively delete a directory it did not itself
+    # create. Only DRILL_ROOT_CREATED=1 (set after this invocation's own mkdir succeeds, below)
+    # authorizes the destructive cleanup steps — a pre-existing, operator-supplied directory is
+    # never touched, on any exit path (success or failure).
+    if [ "$DRILL_ROOT_CREATED" -eq 1 ] && [ -d "$DRILL_ROOT" ]; then
         log "Cleaning up isolated drill root: $DRILL_ROOT"
         # SQL Server creates its own internal subdirectories/files at startup (e.g. .system)
         # owned by its own non-host container UID with permissions the host user cannot recurse
@@ -49,7 +54,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [ -e "$DRILL_ROOT" ]; then
+    echo "Isolated drill root already exists — refusing to reuse or delete it: $DRILL_ROOT" >&2
+    exit 4
+fi
+
 mkdir -p "$DRILL_ROOT"
+DRILL_ROOT_CREATED=1
 
 log "Extracting archive into isolated drill root: $DRILL_ROOT"
 tar xzf "$ARCHIVE" -C "$DRILL_ROOT"

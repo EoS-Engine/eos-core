@@ -48,10 +48,12 @@ log "Starting backup -> $ARCHIVE_PATH"
 
 # Multiple -C transitions normalize every member's archive-internal path (sql/, redis/, chroma/,
 # config/, .env at the archive root) — the absolute EOS_DATA_DIR/REPO_ROOT host paths are never
-# embedded in the archive.
-tar czf "$ARCHIVE_PATH" \
+# embedded in the archive. The subshell's restrictive umask ensures the archive is created at
+# 600 from its very first write, closing the window between creation and the chmod below (which
+# is kept as a defense-in-depth final assertion, not the sole guarantee).
+( umask 077; tar czf "$ARCHIVE_PATH" \
     -C "$EOS_DATA_DIR" sql redis chroma \
-    -C "$REPO_ROOT" config .env
+    -C "$REPO_ROOT" config .env )
 
 chmod 600 "$ARCHIVE_PATH"
 
@@ -67,10 +69,22 @@ prune_retention() {
     local today_epoch
     today_epoch="$(date -u -d "$(date -u +%Y-%m-%d)" +%s)"
 
-    local -a files=()
+    local -a candidates=()
     while IFS= read -r -d '' f; do
-        files+=("$f")
+        candidates+=("$f")
     done < <(find "$destination" -maxdepth 1 -type f -name 'eos-backup-*.tar.gz' -print0)
+
+    # Only files matching this script's own exact naming convention are ever considered for
+    # retention — anything else (manual copies, unrelated files a foreign process dropped in the
+    # destination) is excluded from "files" entirely here, up front, so neither the aging logic
+    # nor the final deletion loop below can ever parse or delete it.
+    local -a files=()
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if [[ "$(basename "$candidate")" =~ ^eos-backup-[0-9]{8}-[0-9]{6}(-[0-9]+)?\.tar\.gz$ ]]; then
+            files+=("$candidate")
+        fi
+    done
 
     local -A bucket_best_file=()
     local -A bucket_best_age=()
@@ -80,9 +94,6 @@ prune_retention() {
     for f in "${files[@]}"; do
         base="$(basename "$f")"
         date_part="$(printf '%s' "$base" | sed -E 's/^eos-backup-([0-9]{8})-[0-9]{6}.*\.tar\.gz$/\1/')"
-        if [ -z "$date_part" ]; then
-            continue
-        fi
         file_epoch="$(date -u -d "${date_part:0:4}-${date_part:4:2}-${date_part:6:2}" +%s)"
         age_days=$(( (today_epoch - file_epoch) / 86400 ))
 

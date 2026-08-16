@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using EOS.Runner.Bootstrap;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -36,11 +37,21 @@ public static class RestoreDrillRunner
         {
             Console.WriteLine(
                 $"{result.StepName}: {(result.Status ? "PASS" : "FAIL")}" +
-                (result.Error is not null ? $" - {result.Error}" : string.Empty));
+                (result.Error is not null ? $" - {RedactSensitiveContent(result.Error)}" : string.Empty));
         }
 
         return IsCompleteSuccess(results) ? 0 : 1;
     }
+
+    // BootstrapRunner's "Start Infrastructure" step surfaces raw exceptions from SqlConnection /
+    // ConnectionMultiplexer, whose messages can echo the connection string they failed to open —
+    // including the SA password. This strips any password=/pwd= value (case-insensitive) before
+    // the message is ever written to stdout.
+    private static readonly Regex SensitiveKeyValuePattern = new(
+        @"(?<key>password|pwd)\s*=\s*[^;]*", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public static string? RedactSensitiveContent(string? message) =>
+        message is null ? null : SensitiveKeyValuePattern.Replace(message, "${key}=***");
 
     public static Task<IReadOnlyList<BootstrapResult>> RunBootstrapAsync(string configDirectory)
     {
