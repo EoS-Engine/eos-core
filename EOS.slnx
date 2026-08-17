@@ -24,6 +24,7 @@
     <Project Path="src/EOS.QA/EOS.QA.csproj" />
     <Project Path="src/EOS.Reasoning/EOS.Reasoning.csproj" />
     <Project Path="src/EOS.Resources/EOS.Resources.csproj" />
+    <Project Path="src/EOS.RestoreDrill/EOS.RestoreDrill.csproj" />
     <Project Path="src/EOS.Runner/EOS.Runner.csproj" />
     <Project Path="src/EOS.SDK/EOS.SDK.csproj" />
     <Project Path="src/EOS.SeniorEngineer/EOS.SeniorEngineer.csproj" />
@@ -36,6 +37,8 @@
   <Folder Name="/tests/">
     <Project Path="tests/EOS.AIProvider.Tests/EOS.AIProvider.Tests.csproj" />
     <Project Path="tests/EOS.ArchitectureTests/EOS.ArchitectureTests.csproj" />
+    <Project Path="tests/EOS.Dashboard.Tests/EOS.Dashboard.Tests.csproj" />
+    <Project Path="tests/EOS.Deploy.Tests/EOS.Deploy.Tests.csproj" />
     <Project Path="tests/EOS.Gates.Tests/EOS.Gates.Tests.csproj" />
     <Project Path="tests/EOS.Infrastructure.Tests/EOS.Infrastructure.Tests.csproj" />
     <Project Path="tests/EOS.Knowledge.Tests/EOS.Knowledge.Tests.csproj" />
@@ -44,7 +47,9 @@
     <Project Path="tests/EOS.Planner.Tests/EOS.Planner.Tests.csproj" />
     <Project Path="tests/EOS.Reasoning.Tests/EOS.Reasoning.Tests.csproj" />
     <Project Path="tests/EOS.Resources.Tests/EOS.Resources.Tests.csproj" />
+    <Project Path="tests/EOS.RestoreDrill.Tests/EOS.RestoreDrill.Tests.csproj" />
     <Project Path="tests/EOS.Runner.Tests/EOS.Runner.Tests.csproj" />
     <Project Path="tests/EOS.VectorStore.Tests/EOS.VectorStore.Tests.csproj" />
+    <Project Path="tests/EOS.Web.Tests/EOS.Web.Tests.csproj" />
   </Folder>
 </Solution>
