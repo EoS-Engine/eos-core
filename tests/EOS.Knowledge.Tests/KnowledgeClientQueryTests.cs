@@ -1,5 +1,6 @@
 using EOS.KnowledgeGraph;
 using EOS.VectorStore;
+using Microsoft.Data.SqlClient;
 
 namespace EOS.Knowledge.Tests;
 
@@ -166,5 +167,49 @@ public class KnowledgeClientQueryTests
         Assert.Contains(results, node => node.NodeId == sameTypeId);
         Assert.DoesNotContain(results, node => node.NodeId == nodeId);
         Assert.DoesNotContain(results, node => node.NodeId == differentTypeId);
+    }
+
+    // ADR-005 end-to-end proof: the configured bound reaches QuerySimilarAsync's real candidate
+    // resolution through KnowledgeClient's constructor, not just KnowledgeGraphStore in isolation.
+    [Fact]
+    public async Task QuerySimilarAsync_ReturnsAtMostTheConfiguredMaximum_WhenCandidatesExceedIt()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        const int maxCandidates = 5;
+        var client = new KnowledgeClient(
+            store, DefaultRankingWeights, new ChromaVectorStore(ChromaDbEndpoint), NeverCalledMemorySourceStore.Instance,
+            querySimilarMaxCandidates: maxCandidates);
+
+        var queryingNodeId = Guid.NewGuid();
+        var candidateIds = Enumerable.Range(0, maxCandidates + 5).Select(_ => Guid.NewGuid()).ToArray();
+        var allNodeIds = candidateIds.Append(queryingNodeId).ToArray();
+        try
+        {
+            foreach (var nodeId in allNodeIds)
+            {
+                await store.UpsertAsync(
+                    new KnowledgeNode(nodeId, KnowledgeNodeType.Lesson, "a lesson", [], [], DateTimeOffset.UtcNow),
+                    CancellationToken.None);
+            }
+
+            var results = (await client.QuerySimilarAsync(queryingNodeId, CancellationToken.None)).ToList();
+
+            Assert.True(
+                results.Count <= maxCandidates,
+                $"Expected at most {maxCandidates} candidates, got {results.Count}.");
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync(CancellationToken.None);
+            foreach (var nodeId in allNodeIds)
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = "DELETE FROM KnowledgeNode WHERE NodeId = @NodeId";
+                command.Parameters.AddWithValue("@NodeId", nodeId);
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+            }
+        }
     }
 }

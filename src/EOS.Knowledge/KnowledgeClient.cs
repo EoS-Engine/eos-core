@@ -11,7 +11,11 @@ public sealed class KnowledgeClient(
     IContextAssemblyEventPublisher? contextAssemblyEventPublisher = null,
     IEmbeddingGenerator? embeddingGenerator = null,
     ILessonLearnedEventPublisher? lessonLearnedEventPublisher = null,
-    IMemoryConsolidatedEventPublisher? memoryConsolidatedEventPublisher = null) : IKnowledgeClient
+    IMemoryConsolidatedEventPublisher? memoryConsolidatedEventPublisher = null,
+    // ADR-005: query_similar's bound, owned here per EOS.Knowledge's retrieval-resource-safety
+    // responsibility. Default (500) is an implementation-level value only, not derived from any
+    // specification — production always supplies Thresholds.json's configured value (Program.cs).
+    int querySimilarMaxCandidates = 500) : IKnowledgeClient
 {
     private static readonly IReadOnlyList<KnowledgeNodeType> AllNodeTypes =
     [
@@ -87,7 +91,7 @@ public sealed class KnowledgeClient(
             throw new ArgumentException($"'{nodeId}' does not resolve to an existing node.", nameof(nodeId));
         }
 
-        var candidates = (await store.QueryAsync([node.NodeType], null, null, cancellationToken))
+        var candidates = (await store.QueryAsync([node.NodeType], null, null, cancellationToken, querySimilarMaxCandidates))
             .Where(candidate => candidate.NodeId != nodeId)
             .ToList();
 

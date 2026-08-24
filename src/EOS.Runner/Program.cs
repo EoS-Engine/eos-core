@@ -199,7 +199,8 @@ try
         new EventMediatorContextAssemblyEventPublisher(eventMediator),
         embeddingGenerator,
         new EventMediatorLessonLearnedEventPublisher(eventMediator),
-        new EventMediatorMemoryConsolidatedEventPublisher(eventMediator));
+        new EventMediatorMemoryConsolidatedEventPublisher(eventMediator),
+        thresholdsOptions.QuerySimilarMaxCandidates);
 
     AutomaticConsolidationTriggerHandlers.RegisterSubscriptions(eventMediator, knowledgeClient);
 

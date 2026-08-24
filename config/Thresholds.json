@@ -67,5 +67,6 @@
   "ingestionRateWindowSeconds": 3600,
   "ingestionRateThresholdCount": 100,
   "clusteringConfidenceMinimum": 0.5,
-  "domainGeneralizationMinimumCount": 2
+  "domainGeneralizationMinimumCount": 2,
+  "querySimilarMaxCandidates": 500
 }

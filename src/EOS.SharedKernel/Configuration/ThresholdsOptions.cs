@@ -284,4 +284,13 @@ public sealed record ThresholdsOptions
     // its own example of what must be Thresholds.json-sourced, not hardcoded). WP-027 Decision 7.
     [Range(1, int.MaxValue)]
     public required int DomainGeneralizationMinimumCount { get; init; }
+
+    // ADR-005 / Memory-Management-Specification-v1.0 §20.1, Learning-Engine-Specification-v1.1
+    // §14.3: the maximum candidate count a single query_similar invocation may return. Upper
+    // bound (2099) is the hard safety ceiling — PipelineRecordStore.GetByKnowledgeGraphRefsAsync
+    // generates exactly one SQL parameter per distinct candidate, and SQL Server's ceiling is
+    // 2100. The value itself is an implementation-level default (WP-031), not architecturally
+    // derived from any specification.
+    [Range(1, 2099)]
+    public required int QuerySimilarMaxCandidates { get; init; }
 }
