@@ -91,9 +91,10 @@ public sealed class KnowledgeClient(
             throw new ArgumentException($"'{nodeId}' does not resolve to an existing node.", nameof(nodeId));
         }
 
-        var candidates = (await store.QueryAsync([node.NodeType], null, null, cancellationToken, querySimilarMaxCandidates))
-            .Where(candidate => candidate.NodeId != nodeId)
-            .ToList();
+        // CodeRabbit PR #28 finding: excludeNodeId is applied inside the SQL query (before TOP),
+        // so the querying node itself never consumes one of the maxResults candidate slots.
+        var candidates = await store.QueryAsync(
+            [node.NodeType], null, null, cancellationToken, querySimilarMaxCandidates, nodeId);
 
         return RetrievalRanking.Rank(candidates, rankingWeights, node.DomainTags);
     }

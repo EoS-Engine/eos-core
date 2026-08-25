@@ -212,4 +212,52 @@ public class KnowledgeClientQueryTests
             }
         }
     }
+
+    // CodeRabbit PR #28 finding: with maxResults applied before self-exclusion, a querying node
+    // that is itself the newest matching node could consume the only available slot at K=1,
+    // returning zero candidates even though an eligible one exists. The querying node must now be
+    // excluded inside the SQL query (before TOP), so it never occupies a candidate slot.
+    [Fact]
+    public async Task QuerySimilarAsync_ReturnsTheEligibleCandidate_WhenTheQueryingNodeIsTheNewestMatchingNode()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var client = new KnowledgeClient(
+            store, DefaultRankingWeights, new ChromaVectorStore(ChromaDbEndpoint), NeverCalledMemorySourceStore.Instance,
+            querySimilarMaxCandidates: 1);
+
+        var eligibleCandidateId = Guid.NewGuid();
+        var queryingNodeId = Guid.NewGuid();
+        var allNodeIds = new[] { eligibleCandidateId, queryingNodeId };
+        try
+        {
+            await store.UpsertAsync(
+                new KnowledgeNode(eligibleCandidateId, KnowledgeNodeType.Lesson, "an eligible candidate", [], [], DateTimeOffset.UtcNow),
+                CancellationToken.None);
+            // Must be provably the newest in this NodeType's corpus, not merely inserted last —
+            // the SQL bound orders by CreatedAt DESC, so a later CreatedAt is what makes the
+            // querying node the one that would have consumed the only TOP(1) slot pre-fix.
+            await store.UpsertAsync(
+                new KnowledgeNode(queryingNodeId, KnowledgeNodeType.Lesson, "the querying node", [], [], DateTimeOffset.UtcNow.AddDays(1)),
+                CancellationToken.None);
+
+            var results = (await client.QuerySimilarAsync(queryingNodeId, CancellationToken.None)).ToList();
+
+            Assert.Single(results);
+            Assert.Equal(eligibleCandidateId, results[0].NodeId);
+            Assert.DoesNotContain(results, node => node.NodeId == queryingNodeId);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync(CancellationToken.None);
+            foreach (var nodeId in allNodeIds)
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = "DELETE FROM KnowledgeNode WHERE NodeId = @NodeId";
+                command.Parameters.AddWithValue("@NodeId", nodeId);
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+            }
+        }
+    }
 }

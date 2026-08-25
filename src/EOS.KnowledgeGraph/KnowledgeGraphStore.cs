@@ -123,7 +123,8 @@ public sealed class KnowledgeGraphStore(string connectionString)
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdTo,
         CancellationToken cancellationToken,
-        int? maxResults = null)
+        int? maxResults = null,
+        Guid? excludeNodeId = null)
     {
         if (nodeTypes.Count == 0)
         {
@@ -154,6 +155,7 @@ public sealed class KnowledgeGraphStore(string connectionString)
             WHERE NodeType IN ({string.Join(", ", nodeTypeParameterNames)})
               AND (@CreatedFrom IS NULL OR CreatedAt >= @CreatedFrom)
               AND (@CreatedTo IS NULL OR CreatedAt <= @CreatedTo)
+              AND (@ExcludeNodeId IS NULL OR NodeId <> @ExcludeNodeId)
             {orderByClause}
             """;
 
@@ -164,6 +166,10 @@ public sealed class KnowledgeGraphStore(string connectionString)
 
         command.Parameters.AddWithValue("@CreatedFrom", (object?)createdFrom ?? DBNull.Value);
         command.Parameters.AddWithValue("@CreatedTo", (object?)createdTo ?? DBNull.Value);
+        // CodeRabbit PR #28 finding: excludes the querying node before TOP is applied, so it
+        // never consumes one of the maxResults slots (previously done in KnowledgeClient after
+        // TOP had already run, which could return fewer than maxResults eligible candidates).
+        command.Parameters.AddWithValue("@ExcludeNodeId", (object?)excludeNodeId ?? DBNull.Value);
         if (maxResults.HasValue)
         {
             command.Parameters.AddWithValue("@MaxResults", maxResults.Value);
