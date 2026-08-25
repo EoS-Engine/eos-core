@@ -263,4 +263,63 @@ public class KnowledgeGraphStoreTests
             }
         }
     }
+
+    // CodeRabbit PR #28 follow-up finding: ORDER BY CreatedAt DESC alone has no tie-breaker, so
+    // rows sharing an identical CreatedAt had no guaranteed stable order within a bounded TOP
+    // selection. Proves ORDER BY CreatedAt DESC, NodeId ASC makes that tie deterministic. The
+    // expected winner is established independently via SQL Server's own NodeId ordering (a raw
+    // ORDER BY NodeId ASC query) rather than .NET's Guid.CompareTo, since .NET's default GUID
+    // byte ordering does not match SQL Server's uniqueidentifier sort order.
+    [Fact]
+    public async Task QueryAsync_WithMaxResults_BreaksIdenticalCreatedAtTies_ByNodeIdAscending()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var tiedCreatedAt = DateTimeOffset.UtcNow;
+        var tiedNodeIds = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+        try
+        {
+            foreach (var nodeId in tiedNodeIds)
+            {
+                await store.UpsertAsync(
+                    new KnowledgeNode(nodeId, KnowledgeNodeType.Fact, "content", ["backend", "mobile"],
+                        ["artifact://evidence/1"], tiedCreatedAt),
+                    CancellationToken.None);
+            }
+
+            Guid expectedWinner;
+            await using (var connection = new SqlConnection(ConnectionString))
+            {
+                await connection.OpenAsync(CancellationToken.None);
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT TOP 1 NodeId FROM KnowledgeNode
+                    WHERE NodeId IN (@Id0, @Id1, @Id2)
+                    ORDER BY NodeId ASC
+                    """;
+                command.Parameters.AddWithValue("@Id0", tiedNodeIds[0]);
+                command.Parameters.AddWithValue("@Id1", tiedNodeIds[1]);
+                command.Parameters.AddWithValue("@Id2", tiedNodeIds[2]);
+                expectedWinner = (Guid)(await command.ExecuteScalarAsync(CancellationToken.None))!;
+            }
+
+            var results = await store.QueryAsync(
+                [KnowledgeNodeType.Fact], null, null, CancellationToken.None, maxResults: 1);
+
+            Assert.Single(results);
+            Assert.Equal(expectedWinner, results[0].NodeId);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync(CancellationToken.None);
+            foreach (var nodeId in tiedNodeIds)
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = "DELETE FROM KnowledgeNode WHERE NodeId = @NodeId";
+                command.Parameters.AddWithValue("@NodeId", nodeId);
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+            }
+        }
+    }
 }

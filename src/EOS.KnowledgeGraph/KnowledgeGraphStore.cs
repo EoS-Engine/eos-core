@@ -146,7 +146,11 @@ public sealed class KnowledgeGraphStore(string connectionString)
         // candidates over older ones — applied only when maxResults is requested, so every other
         // caller of this method (query(), assemble_context(), CompressionSweep) is unaffected.
         var topClause = maxResults.HasValue ? "TOP (@MaxResults) " : string.Empty;
-        var orderByClause = maxResults.HasValue ? "ORDER BY CreatedAt DESC" : string.Empty;
+        // CodeRabbit PR #28 follow-up finding: CreatedAt alone has no tie-breaker, so rows
+        // sharing an identical CreatedAt had no guaranteed stable order within TOP's selection.
+        // NodeId ASC is a deterministic secondary key with no bearing on relevance — it only
+        // makes an otherwise-arbitrary tie reproducible.
+        var orderByClause = maxResults.HasValue ? "ORDER BY CreatedAt DESC, NodeId ASC" : string.Empty;
 
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
