@@ -303,8 +303,15 @@ public class KnowledgeGraphStoreTests
                 expectedWinner = (Guid)(await command.ExecuteScalarAsync(CancellationToken.None))!;
             }
 
+            // F-3: an unscoped NodeType-only query races against concurrently-running tests and
+            // this codebase's large accumulated historical Fact corpus — e.g. the sibling test
+            // above inserts a deliberately future-dated Fact row that can win TOP(1) instead of
+            // any of this test's own tied rows. Narrowing createdFrom/createdTo to the exact
+            // tiedCreatedAt tick (existing QueryAsync parameters, no production change) scopes
+            // the query to only this test's own 3 rows, since no unrelated row — past, future,
+            // or concurrently inserted — can plausibly share that exact 100ns-precision instant.
             var results = await store.QueryAsync(
-                [KnowledgeNodeType.Fact], null, null, CancellationToken.None, maxResults: 1);
+                [KnowledgeNodeType.Fact], tiedCreatedAt, tiedCreatedAt, CancellationToken.None, maxResults: 1);
 
             Assert.Single(results);
             Assert.Equal(expectedWinner, results[0].NodeId);
