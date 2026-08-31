@@ -122,7 +122,9 @@ public sealed class KnowledgeGraphStore(string connectionString)
         IReadOnlyList<KnowledgeNodeType> nodeTypes,
         DateTimeOffset? createdFrom,
         DateTimeOffset? createdTo,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? maxResults = null,
+        Guid? excludeNodeId = null)
     {
         if (nodeTypes.Count == 0)
         {
@@ -133,14 +135,32 @@ public sealed class KnowledgeGraphStore(string connectionString)
         await connection.OpenAsync(cancellationToken);
 
         var nodeTypeParameterNames = nodeTypes.Select((_, index) => $"@NodeType{index}").ToArray();
+        // ADR-005: retrieval-resource safety is enforced here, at the source query, not by any
+        // caller. TOP without ORDER BY is syntactically valid but returns SQL Server's own
+        // arbitrary, unordered row selection — proven insufficient by this WP's own regression
+        // test (a freshly-inserted candidate fell outside an unordered TOP against this
+        // codebase's large accumulated same-NodeType corpus). ORDER BY CreatedAt DESC is the
+        // minimal deterministic criterion available without reproducing RetrievalRanking's
+        // frozen formula (ADR-015-005) in SQL. Trade-off, disclosed not hidden: once a
+        // NodeType's corpus exceeds maxResults, this systematically favors more-recently-created
+        // candidates over older ones — applied only when maxResults is requested, so every other
+        // caller of this method (query(), assemble_context(), CompressionSweep) is unaffected.
+        var topClause = maxResults.HasValue ? "TOP (@MaxResults) " : string.Empty;
+        // CodeRabbit PR #28 follow-up finding: CreatedAt alone has no tie-breaker, so rows
+        // sharing an identical CreatedAt had no guaranteed stable order within TOP's selection.
+        // NodeId ASC is a deterministic secondary key with no bearing on relevance — it only
+        // makes an otherwise-arbitrary tie reproducible.
+        var orderByClause = maxResults.HasValue ? "ORDER BY CreatedAt DESC, NodeId ASC" : string.Empty;
 
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
-            SELECT NodeId, NodeType, Content, DomainTagsJson, EvidenceRefsJson, CreatedAt, KnowledgeMetadataJson
+            SELECT {topClause}NodeId, NodeType, Content, DomainTagsJson, EvidenceRefsJson, CreatedAt, KnowledgeMetadataJson
             FROM KnowledgeNode
             WHERE NodeType IN ({string.Join(", ", nodeTypeParameterNames)})
               AND (@CreatedFrom IS NULL OR CreatedAt >= @CreatedFrom)
               AND (@CreatedTo IS NULL OR CreatedAt <= @CreatedTo)
+              AND (@ExcludeNodeId IS NULL OR NodeId <> @ExcludeNodeId)
+            {orderByClause}
             """;
 
         for (var index = 0; index < nodeTypeParameterNames.Length; index++)
@@ -150,6 +170,14 @@ public sealed class KnowledgeGraphStore(string connectionString)
 
         command.Parameters.AddWithValue("@CreatedFrom", (object?)createdFrom ?? DBNull.Value);
         command.Parameters.AddWithValue("@CreatedTo", (object?)createdTo ?? DBNull.Value);
+        // CodeRabbit PR #28 finding: excludes the querying node before TOP is applied, so it
+        // never consumes one of the maxResults slots (previously done in KnowledgeClient after
+        // TOP had already run, which could return fewer than maxResults eligible candidates).
+        command.Parameters.AddWithValue("@ExcludeNodeId", (object?)excludeNodeId ?? DBNull.Value);
+        if (maxResults.HasValue)
+        {
+            command.Parameters.AddWithValue("@MaxResults", maxResults.Value);
+        }
 
         var results = new List<KnowledgeNode>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

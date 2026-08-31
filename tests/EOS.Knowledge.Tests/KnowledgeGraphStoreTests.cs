@@ -179,4 +179,154 @@ public class KnowledgeGraphStoreTests
 
         Assert.Empty(results);
     }
+
+    // ADR-005: proves KnowledgeGraphStore.QueryAsync's maxResults parameter is the actual
+    // resource-safety enforcement point for Finding #2 — never returns more rows than requested,
+    // even when the matching corpus is larger.
+    [Fact]
+    public async Task QueryAsync_NeverReturnsMoreThanMaxResults_WhenTheCorpusExceedsIt()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        const int maxResults = 5;
+        var nodeIds = Enumerable.Range(0, maxResults + 5).Select(_ => Guid.NewGuid()).ToArray();
+        try
+        {
+            foreach (var nodeId in nodeIds)
+            {
+                await store.UpsertAsync(CreateNode(nodeId), CancellationToken.None);
+            }
+
+            var results = await store.QueryAsync(
+                [KnowledgeNodeType.Fact], null, null, CancellationToken.None, maxResults);
+
+            Assert.Equal(maxResults, results.Count);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync(CancellationToken.None);
+            foreach (var nodeId in nodeIds)
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = "DELETE FROM KnowledgeNode WHERE NodeId = @NodeId";
+                command.Parameters.AddWithValue("@NodeId", nodeId);
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+            }
+        }
+    }
+
+    // ADR-005: proves the ORDER BY CreatedAt DESC applied alongside maxResults is genuinely
+    // necessary and deterministic — without it, a just-created row can fall outside an unordered
+    // TOP against a large pre-existing same-NodeType corpus (this is exactly what this WP's
+    // implementation pass observed against this repository's accumulated test data).
+    [Fact]
+    public async Task QueryAsync_WithMaxResults_AlwaysIncludesTheMostRecentlyCreatedMatchingNode()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        const int maxResults = 3;
+        var olderNodeIds = Enumerable.Range(0, maxResults + 5)
+            .Select(_ => Guid.NewGuid()).ToArray();
+        var mostRecentNodeId = Guid.NewGuid();
+        var allNodeIds = olderNodeIds.Append(mostRecentNodeId).ToArray();
+        try
+        {
+            foreach (var nodeId in olderNodeIds)
+            {
+                await store.UpsertAsync(CreateNode(nodeId), CancellationToken.None);
+            }
+
+            // The node under test must be provably the newest in this NodeType's corpus, not
+            // merely inserted last — CreatedAt (not insertion order) is what ORDER BY relies on.
+            await store.UpsertAsync(
+                new KnowledgeNode(
+                    mostRecentNodeId, KnowledgeNodeType.Fact, "content", ["backend", "mobile"],
+                    ["artifact://evidence/1"], DateTimeOffset.UtcNow.AddDays(1)),
+                CancellationToken.None);
+
+            var results = await store.QueryAsync(
+                [KnowledgeNodeType.Fact], null, null, CancellationToken.None, maxResults);
+
+            Assert.Contains(results, node => node.NodeId == mostRecentNodeId);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync(CancellationToken.None);
+            foreach (var nodeId in allNodeIds)
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = "DELETE FROM KnowledgeNode WHERE NodeId = @NodeId";
+                command.Parameters.AddWithValue("@NodeId", nodeId);
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+            }
+        }
+    }
+
+    // CodeRabbit PR #28 follow-up finding: ORDER BY CreatedAt DESC alone has no tie-breaker, so
+    // rows sharing an identical CreatedAt had no guaranteed stable order within a bounded TOP
+    // selection. Proves ORDER BY CreatedAt DESC, NodeId ASC makes that tie deterministic. The
+    // expected winner is established independently via SQL Server's own NodeId ordering (a raw
+    // ORDER BY NodeId ASC query) rather than .NET's Guid.CompareTo, since .NET's default GUID
+    // byte ordering does not match SQL Server's uniqueidentifier sort order.
+    [Fact]
+    public async Task QueryAsync_WithMaxResults_BreaksIdenticalCreatedAtTies_ByNodeIdAscending()
+    {
+        var store = new KnowledgeGraphStore(ConnectionString);
+        await store.EnsureTableExistsAsync(CancellationToken.None);
+        var tiedCreatedAt = DateTimeOffset.UtcNow;
+        var tiedNodeIds = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+        try
+        {
+            foreach (var nodeId in tiedNodeIds)
+            {
+                await store.UpsertAsync(
+                    new KnowledgeNode(nodeId, KnowledgeNodeType.Fact, "content", ["backend", "mobile"],
+                        ["artifact://evidence/1"], tiedCreatedAt),
+                    CancellationToken.None);
+            }
+
+            Guid expectedWinner;
+            await using (var connection = new SqlConnection(ConnectionString))
+            {
+                await connection.OpenAsync(CancellationToken.None);
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT TOP 1 NodeId FROM KnowledgeNode
+                    WHERE NodeId IN (@Id0, @Id1, @Id2)
+                    ORDER BY NodeId ASC
+                    """;
+                command.Parameters.AddWithValue("@Id0", tiedNodeIds[0]);
+                command.Parameters.AddWithValue("@Id1", tiedNodeIds[1]);
+                command.Parameters.AddWithValue("@Id2", tiedNodeIds[2]);
+                expectedWinner = (Guid)(await command.ExecuteScalarAsync(CancellationToken.None))!;
+            }
+
+            // F-3: an unscoped NodeType-only query races against concurrently-running tests and
+            // this codebase's large accumulated historical Fact corpus — e.g. the sibling test
+            // above inserts a deliberately future-dated Fact row that can win TOP(1) instead of
+            // any of this test's own tied rows. Narrowing createdFrom/createdTo to the exact
+            // tiedCreatedAt tick (existing QueryAsync parameters, no production change) scopes
+            // the query to only this test's own 3 rows, since no unrelated row — past, future,
+            // or concurrently inserted — can plausibly share that exact 100ns-precision instant.
+            var results = await store.QueryAsync(
+                [KnowledgeNodeType.Fact], tiedCreatedAt, tiedCreatedAt, CancellationToken.None, maxResults: 1);
+
+            Assert.Single(results);
+            Assert.Equal(expectedWinner, results[0].NodeId);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync(CancellationToken.None);
+            foreach (var nodeId in tiedNodeIds)
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = "DELETE FROM KnowledgeNode WHERE NodeId = @NodeId";
+                command.Parameters.AddWithValue("@NodeId", nodeId);
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+            }
+        }
+    }
 }
