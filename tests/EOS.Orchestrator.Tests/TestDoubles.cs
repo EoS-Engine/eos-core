@@ -591,3 +591,160 @@ internal sealed class CallCountingOperationalModeStore(IOperationalModeStore inn
         return inner.SetCurrentModeAsync(mode, cancellationToken);
     }
 }
+
+// Post-Roadmap WP-A: ExecutionCoordinator's execution collaborators (ITaskExecutionClient from
+// EOS.Contracts; ITaskCompletedEventPublisher / ITaskBlockedEventPublisher from EOS.Orchestrator).
+
+/// <summary>Executor double for tests that exercise dispatch only — must never be invoked.</summary>
+internal sealed class NeverCalledTaskExecutionClient : ITaskExecutionClient
+{
+    public Task<TaskExecutionResult> ExecuteAsync(DispatchedTask task, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("ExecuteAsync must not be called by this test.");
+}
+
+/// <summary>Executor double returning fixed evidence references, recording every invocation.</summary>
+internal sealed class FixedEvidenceTaskExecutionClient(params string[] evidenceRefs) : ITaskExecutionClient
+{
+    public List<Guid> ExecutedTaskIds { get; } = [];
+
+    public Task<TaskExecutionResult> ExecuteAsync(DispatchedTask task, CancellationToken cancellationToken = default)
+    {
+        ExecutedTaskIds.Add(task.TaskId);
+        return Task.FromResult(new TaskExecutionResult(evidenceRefs));
+    }
+}
+
+/// <summary>Executor double that fails like a role that could not produce valid evidence.</summary>
+internal sealed class ThrowingTaskExecutionClient(string message = "The produced diff is not a valid, in-scope unified diff.") : ITaskExecutionClient
+{
+    public int CallCount { get; private set; }
+
+    public Task<TaskExecutionResult> ExecuteAsync(DispatchedTask task, CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        throw new InvalidOperationException(message);
+    }
+}
+
+/// <summary>Executor double that cancels the supplied token mid-execution and then observes it.</summary>
+internal sealed class CancellingTaskExecutionClient(CancellationTokenSource cancellationTokenSource) : ITaskExecutionClient
+{
+    public async Task<TaskExecutionResult> ExecuteAsync(DispatchedTask task, CancellationToken cancellationToken = default)
+    {
+        await cancellationTokenSource.CancelAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new InvalidOperationException("unreachable");
+    }
+}
+
+internal sealed class RecordingTaskCompletedEventPublisher : ITaskCompletedEventPublisher
+{
+    public List<(Guid TaskId, string[] EvidenceRefs)> Published { get; } = [];
+
+    public void PublishTaskCompleted(Guid taskId, string[] evidenceRefs) => Published.Add((taskId, evidenceRefs));
+}
+
+/// <summary>Captures the persisted Task state at the moment TaskCompleted is published (persist-then-publish proof).</summary>
+internal sealed class StateCapturingTaskCompletedEventPublisher(DispatchedTaskStore store) : ITaskCompletedEventPublisher
+{
+    public List<TaskLifecycleState> ObservedStatesAtPublishTime { get; } = [];
+
+    public void PublishTaskCompleted(Guid taskId, string[] evidenceRefs) =>
+        ObservedStatesAtPublishTime.Add(store.GetByIdAsync(taskId, CancellationToken.None).GetAwaiter().GetResult()!.State);
+}
+
+internal sealed class RecordingTaskBlockedEventPublisher : ITaskBlockedEventPublisher
+{
+    public List<(Guid TaskId, string Reason)> Published { get; } = [];
+
+    public void PublishTaskBlocked(Guid taskId, string reason) => Published.Add((taskId, reason));
+}
+
+/// <summary>
+/// Re-enters the LoopController with a "Failure" trigger on every TaskBlocked — the exact wiring
+/// Program.cs already has for TaskBlockedPayload — and fails loudly if invoked more than once,
+/// so any recursion of the Failure-triggered iteration fails the test instead of looping.
+/// </summary>
+internal sealed class FailureTriggeringTaskBlockedEventPublisher : ITaskBlockedEventPublisher
+{
+    public LoopController? Controller { get; set; }
+
+    public int Invocations { get; private set; }
+
+    public void PublishTaskBlocked(Guid taskId, string reason)
+    {
+        Invocations++;
+        if (Invocations > 1)
+        {
+            throw new InvalidOperationException("TaskBlocked was published more than once — the Failure-triggered iteration recursed.");
+        }
+
+        Controller!.RunIterationAsync(new TriggerContext("Failure", taskId.ToString()), CancellationToken.None).GetAwaiter().GetResult();
+    }
+}
+
+/// <summary>Allows every action except the named ActionType, which it denies — isolates one gate.</summary>
+internal sealed class DenyActionTypeProtectionClient(string deniedActionType) : IProtectionClient
+{
+    public ValidationResult Validate(ActionRequest action) =>
+        action.ActionType == deniedActionType
+            ? new ValidationResult(ProtectionVerdict.Deny, RiskTier.High, $"{deniedActionType} denied by test.")
+            : new ValidationResult(ProtectionVerdict.Allow, RiskTier.Low, null);
+}
+
+// ADR-009: ExecutionCoordinator's Universal Gate collaborator (IUniversalGateClient from EOS.Contracts).
+
+/// <summary>Gate double that reports Gates 1–2 as passed and records the evidence it was asked to gate.</summary>
+internal sealed class PassingUniversalGateClient : IUniversalGateClient
+{
+    public List<(Guid TaskId, string[] EvidenceRefs)> Evaluated { get; } = [];
+
+    public Task<UniversalGateDecision> EvaluateAsync(DispatchedTask task, IReadOnlyList<string> evidenceRefs, CancellationToken cancellationToken = default)
+    {
+        Evaluated.Add((task.TaskId, [.. evidenceRefs]));
+        var result = new UniversalGateResult(
+            new GateStepResult(GateStepStatus.Passed, "Built"),
+            new GateStepResult(GateStepStatus.Passed, "Tested"));
+        return Task.FromResult(new UniversalGateDecision(true, null, result));
+    }
+}
+
+/// <summary>Gate double that reports a failed Universal Gate with the given Rule Engine reason.</summary>
+internal sealed class FailingUniversalGateClient(string reason) : IUniversalGateClient
+{
+    public int CallCount { get; private set; }
+
+    public Task<UniversalGateDecision> EvaluateAsync(DispatchedTask task, IReadOnlyList<string> evidenceRefs, CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        var result = new UniversalGateResult(
+            new GateStepResult(GateStepStatus.Failed, reason),
+            new GateStepResult(GateStepStatus.NotApplicable, "Not run — Gate 1 failed."));
+        return Task.FromResult(new UniversalGateDecision(false, reason, result));
+    }
+}
+
+/// <summary>Gate double that fails to run at all (e.g. the isolated copy could not be created).</summary>
+internal sealed class ThrowingUniversalGateClient(string message) : IUniversalGateClient
+{
+    public Task<UniversalGateDecision> EvaluateAsync(DispatchedTask task, IReadOnlyList<string> evidenceRefs, CancellationToken cancellationToken = default) =>
+        throw new IOException(message);
+}
+
+/// <summary>Gate double that cancels the supplied token mid-evaluation and then observes it.</summary>
+internal sealed class CancellingUniversalGateClient(CancellationTokenSource cancellationTokenSource) : IUniversalGateClient
+{
+    public async Task<UniversalGateDecision> EvaluateAsync(DispatchedTask task, IReadOnlyList<string> evidenceRefs, CancellationToken cancellationToken = default)
+    {
+        await cancellationTokenSource.CancelAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new InvalidOperationException("unreachable");
+    }
+}
+
+/// <summary>Gate double for tests whose path must block before any gate runs — must never be invoked.</summary>
+internal sealed class NeverCalledUniversalGateClient : IUniversalGateClient
+{
+    public Task<UniversalGateDecision> EvaluateAsync(DispatchedTask task, IReadOnlyList<string> evidenceRefs, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("EvaluateAsync must not be called by this test.");
+}

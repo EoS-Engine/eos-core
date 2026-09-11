@@ -171,7 +171,9 @@ public class SchedulerExecutionCoordinatorAcceptanceTests
 
         var taskStartedPublisher = new RecordingTaskStartedEventPublisher();
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, taskDispatchProtectionClient, taskStartedPublisher);
+            scheduler, dispatchedTaskStore, taskDispatchProtectionClient, taskStartedPublisher,
+            new NeverCalledTaskExecutionClient(), new NoOpTaskCompletedEventPublisher(), new NoOpTaskBlockedEventPublisher(),
+            new NeverCalledUniversalGateClient());
 
         return (planningEngine, scheduler, dispatchedTaskStore, executionCoordinator, taskStartedPublisher);
     }
@@ -233,6 +235,36 @@ public class SchedulerExecutionCoordinatorAcceptanceTests
     {
         public void PublishPlannerGenerated(Guid planId, Guid taskGraphRef) =>
             scheduler.OnPlannerGeneratedAsync(planId, CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    // Post-Roadmap WP-A: ExecutionCoordinator gained three required execution collaborators.
+    // This test exercises dispatch only, never ExecuteAndCompleteAsync, so the executor is a
+    // never-called double and the two publishers are no-ops (same no-op pattern as the
+    // NoOp*EventPublisher doubles in this file).
+    private sealed class NeverCalledTaskExecutionClient : ITaskExecutionClient
+    {
+        public Task<TaskExecutionResult> ExecuteAsync(DispatchedTask task, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("ExecuteAsync must not be called by this test.");
+    }
+
+    private sealed class NoOpTaskCompletedEventPublisher : ITaskCompletedEventPublisher
+    {
+        public void PublishTaskCompleted(Guid taskId, string[] evidenceRefs)
+        {
+        }
+    }
+
+    private sealed class NeverCalledUniversalGateClient : IUniversalGateClient
+    {
+        public Task<UniversalGateDecision> EvaluateAsync(DispatchedTask task, IReadOnlyList<string> evidenceRefs, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("EvaluateAsync must not be called by this test.");
+    }
+
+    private sealed class NoOpTaskBlockedEventPublisher : ITaskBlockedEventPublisher
+    {
+        public void PublishTaskBlocked(Guid taskId, string reason)
+        {
+        }
     }
 
     private sealed class RecordingTaskStartedEventPublisher : ITaskStartedEventPublisher

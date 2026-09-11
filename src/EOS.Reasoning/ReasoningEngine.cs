@@ -255,8 +255,13 @@ public sealed class ReasoningEngine(
     {
     }
 
-    // §12.6 Context Validation + §21 Missing Context: "if still insufficient [after Context
-    // Expansion], returns ReasoningFailed(failure_mode=MissingContext)".
+    // §12.6 Context Validation + §21 Missing Context (as corrected by ADR-006): Missing Context
+    // is an EMPTY ContextPayload — zero items — after the one permitted Context Expansion
+    // (§12.4). Memory's `truncated=true` (Memory-Management-Specification-v1.0 §15.2) only
+    // signals that the assembled context is incomplete relative to Memory's ranked candidates;
+    // a non-empty truncated payload is usable context and is validated here, with its
+    // truncation surfaced through Explainability (§14, see PrepareContext) rather than treated
+    // as failure. Truncation alone never produces MissingContext.
     private static void ValidateContext(ReasoningRequest request, AcquiredContext? acquiredContext)
     {
         if (request.ContextScope is null)
@@ -264,11 +269,11 @@ public sealed class ReasoningEngine(
             return;
         }
 
-        if (acquiredContext is null || acquiredContext.Items.Count == 0 || acquiredContext.Truncated)
+        if (acquiredContext is null || acquiredContext.Items.Count == 0)
         {
             throw new ReasoningFailedException(
                 ReasoningFailureMode.MissingContext,
-                "Context acquisition returned an empty or still-truncated ContextPayload after Context Expansion (§12.4).");
+                "Context acquisition returned an empty ContextPayload after Context Expansion (§12.4).");
         }
     }
 
@@ -297,6 +302,14 @@ public sealed class ReasoningEngine(
         if (reducedCount > 0)
         {
             notes.Add($"{reducedCount} context item(s) were reduced given {reasoningType}'s pipeline emphasis (§12.5).");
+        }
+
+        // ADR-006: Memory's truncation signal (Memory-Management-Specification-v1.0 §15.2) stays
+        // observable — a non-empty truncated payload is used, and the fact that further relevant
+        // items existed beyond the budget is recorded as an explicit assumption (§14).
+        if (acquired.Truncated)
+        {
+            notes.Add("Context was truncated to the budget after Context Expansion; further relevant items existed (Memory-Management-Specification-v1.0 §15.2).");
         }
 
         return (reduced, notes.Count > 0 ? string.Join(" ", notes) : null);

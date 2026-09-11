@@ -13,6 +13,7 @@ using EOS.Resources;
 using EOS.Runner.Bootstrap;
 using EOS.Runner.Commands;
 using EOS.SDK;
+using EOS.SeniorEngineer;
 using EOS.SharedKernel.Configuration;
 using EOS.VectorStore;
 using EOS.Web;
@@ -33,7 +34,7 @@ if (results.Count == 0 || !results.All(r => r.Status))
     return 1;
 }
 
-if (args is not ["ask", _] and not ["compress"] and not ["web"])
+if (args is not ["ask", _] and not ["compress"] and not ["web"] and not ["run", _])
 {
     return 0;
 }
@@ -403,9 +404,35 @@ try
     // knowledgeManagementClient's/planningClient's own identical precedent above. Exercised via
     // SchedulerExecutionCoordinatorAcceptanceTests, which drives it directly against real
     // infrastructure.
+    // Post-Roadmap WP-A: the Execution Coordinator's execution collaborators — Constitution Part 6
+    // §6.2's "Role executes". EOS.SeniorEngineer (the first Autonomous Role with behaviour, §0.2.1)
+    // reaches the Artifact Registry (Part 8, EOS.Infrastructure.ArtifactStore per Part 4) and the
+    // repository (Protection §11 "Local Files") only through EOS.Contracts interfaces wired here;
+    // the workspace read is Protection-gated in this composition root (Protection §10: structural
+    // enforcement), never inside the role. Read-only, src/ and tests/ only, no writes anywhere.
+    var artifactStore = new ArtifactStore(connectionOptions.SqlServerConnectionString);
+    await artifactStore.EnsureTableExistsAsync(CancellationToken.None);
+    var repositoryRoot = Path.GetDirectoryName(loader.ConfigDirectory)
+        ?? throw new InvalidOperationException("Could not derive the repository root from the configuration directory.");
+    var seniorEngineer = new SeniorEngineer(
+        reasoningEngine,
+        new ProtectionGatedWorkspaceClient(new WorkspaceReader(repositoryRoot), protectionGate, SeniorEngineer.RoleName),
+        artifactStore);
+
     var executionCoordinator = new ExecutionCoordinator(
-        scheduler, dispatchedTaskStore, protectionGate, new EventMediatorTaskStartedEventPublisher(eventMediator));
-    _ = executionCoordinator;
+        scheduler,
+        dispatchedTaskStore,
+        protectionGate,
+        new EventMediatorTaskStartedEventPublisher(eventMediator),
+        seniorEngineer,
+        new EventMediatorTaskCompletedEventPublisher(eventMediator),
+        new EventMediatorTaskBlockedEventPublisher(eventMediator),
+        new ProtectionGatedUniversalGateClient(
+            artifactStore,
+            new IsolatedUniversalGateRunner(repositoryRoot),
+            ruleEngine,
+            protectionGate,
+            SeniorEngineer.RoleName));
 
     // WP-025.2/.3/.5/.7: Retry Manager, Rollback Manager, Progress Monitor, and the failure-
     // triggered replan request client — real, independently tested infrastructure with no
@@ -491,6 +518,11 @@ try
     eventMediator.Subscribe<GoalCreatedPayload>(PersistEvent);
     eventMediator.Subscribe<TaskCreatedPayload>(PersistEvent);
     eventMediator.Subscribe<TaskStartedPayload>(PersistEvent);
+    // Post-Roadmap WP-A: the two Task events its Execution Coordinator now produces — the
+    // execution record (§0.15.1) and the Running → Blocked record (Part 6 §6.2) — persisted
+    // alongside WP-030's 7 types.
+    eventMediator.Subscribe<TaskCompletedPayload>(PersistEvent);
+    eventMediator.Subscribe<TaskBlockedPayload>(PersistEvent);
 
     // WP-030: composition-root adapters for the Dashboard's approved read interfaces
     // (EOS.Contracts, WP030-02). EOS.Dashboard itself never references these implementation
@@ -553,6 +585,51 @@ try
     {
         await DashboardWebHost.RunAsync(dashboardQueryService, dashboardOptions, args);
         return 0;
+    }
+
+    // Post-Roadmap WP-A: `run "<engineering task>"` — a human-issued ManualRequest
+    // (Autonomous-Engineering-Loop-Specification-v1.0 §8) through the existing, unmodified
+    // LoopController iteration: Reason → Protection → Plan → Schedule → Dispatch → Role executes
+    // → Artifact → TaskCompletion Protection → Review → TaskCompleted. The human typing the
+    // command is the explicit approval Assisted mode (§22.2) requires before steps 8–10; mode
+    // enforcement itself remains deferred (WP-029 Decision 4). The report below is assembled
+    // solely from the events the runtime publishes — nothing here bypasses or re-implements
+    // any subsystem.
+    if (args is ["run", _])
+    {
+        var runLogger = host.Services.GetRequiredService<ILogger<LoopController>>();
+        var completedIterations = new List<(Guid IterationId, string Outcome, int[] Steps)>();
+        eventMediator.Subscribe<GoalCreatedPayload>(envelope =>
+            Console.WriteLine($"Goal created: {envelope.Payload.GoalId} — \"{envelope.Payload.Statement}\""));
+        eventMediator.Subscribe<TaskStartedPayload>(envelope =>
+            Console.WriteLine($"Task dispatched (Running): {envelope.Payload.TaskId}"));
+        eventMediator.Subscribe<TaskCompletedPayload>(envelope =>
+            Console.WriteLine($"Task completed (Review): {envelope.Payload.TaskId} evidence: {string.Join(", ", envelope.Payload.EvidenceRefs)}"));
+        eventMediator.Subscribe<TaskBlockedPayload>(envelope =>
+        {
+            runLogger.LogError("Task {TaskId} blocked: {Reason}", envelope.Payload.TaskId, envelope.Payload.Reason);
+            Console.WriteLine($"Task blocked: {envelope.Payload.TaskId} — {envelope.Payload.Reason}");
+        });
+        eventMediator.Subscribe<LoopIterationCompletedPayload>(envelope =>
+            completedIterations.Add((envelope.Payload.IterationId, envelope.Payload.Outcome, envelope.Payload.StepsTraversed)));
+
+        try
+        {
+            await loopController.RunIterationAsync(new TriggerContext("ManualRequest", args[1]), CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            runLogger.LogError(ex, "Loop iteration failed for ManualRequest.");
+            return 1;
+        }
+
+        foreach (var (iterationId, outcome, steps) in completedIterations)
+        {
+            Console.WriteLine($"Loop iteration {iterationId}: {outcome} (steps {string.Join(",", steps)})");
+        }
+
+        var outerOutcome = completedIterations.Count > 0 ? completedIterations[^1].Outcome : "Unknown";
+        return outerOutcome == "Completed" ? 0 : 1;
     }
 
     if (args is ["compress"])
@@ -821,9 +898,14 @@ internal sealed class EventMediatorResourceRecoveredEventPublisher(EventMediator
 // WP-025 — these two subscriptions remain structurally ready, not yet exercised.
 internal sealed record TaskStartedPayload(Guid TaskId);
 
-internal sealed record TaskCompletedPayload(Guid TaskId);
+// Post-Roadmap WP-A: TaskCompleted's Constitution Part 3 payload (task_id, evidence_refs[]) —
+// EvidenceRefs added now that the Execution Coordinator is its first real producer; the
+// pre-existing ResourceMonitor subscription reads TaskId only.
+internal sealed record TaskCompletedPayload(Guid TaskId, string[] EvidenceRefs);
 
-internal sealed record TaskBlockedPayload(Guid TaskId);
+// Post-Roadmap WP-A: TaskBlocked's Constitution Part 3 payload (task_id, blocking_gate/reason) —
+// Reason added now that the Execution Coordinator is its first real producer.
+internal sealed record TaskBlockedPayload(Guid TaskId, string Reason);
 
 // WP-025 Architecture Board Ruling Q4: TaskRetried's payload, frozen to exactly these two fields
 // (task_id, attempt_number) — no "reason" field, since no frozen document establishes evidence
@@ -1144,6 +1226,141 @@ internal sealed class EventMediatorTaskStartedEventPublisher(EventMediator event
             version: "v1",
             producer: "EOS.Orchestrator",
             payload: new TaskStartedPayload(taskId)));
+    }
+}
+
+// Post-Roadmap WP-A: Constitution Part 3's TaskCompleted (task_id, evidence_refs[]) and
+// TaskBlocked (task_id, reason), reused verbatim — producer: Execution Coordinator — per the
+// Composition Root Adapter Pattern (ADR-015-001), mirroring EventMediatorTaskStartedEventPublisher.
+internal sealed class EventMediatorTaskCompletedEventPublisher(EventMediator eventMediator) : ITaskCompletedEventPublisher
+{
+    public void PublishTaskCompleted(Guid taskId, string[] evidenceRefs)
+    {
+        eventMediator.Publish(EventEnvelope<TaskCompletedPayload>.Create(
+            eventType: "TaskCompleted",
+            version: "v1",
+            producer: "EOS.Orchestrator",
+            payload: new TaskCompletedPayload(taskId, evidenceRefs)));
+    }
+}
+
+internal sealed class EventMediatorTaskBlockedEventPublisher(EventMediator eventMediator) : ITaskBlockedEventPublisher
+{
+    public void PublishTaskBlocked(Guid taskId, string reason)
+    {
+        eventMediator.Publish(EventEnvelope<TaskBlockedPayload>.Create(
+            eventType: "TaskBlocked",
+            version: "v1",
+            producer: "EOS.Orchestrator",
+            payload: new TaskBlockedPayload(taskId, reason)));
+    }
+}
+
+/// <summary>
+/// Post-Roadmap WP-A: Protection-Layer-Specification-v1.0 §11's "Local Files" domain, enforced
+/// structurally at the composition root (§10) — every workspace read an Autonomous Role performs
+/// is first validated as a <c>WorkspaceRead</c> action by the real <see cref="IProtectionClient"/>,
+/// then delegated to <see cref="WorkspaceReader"/> (EOS.Infrastructure, read-only, src/ and
+/// tests/ only). Disclosed limitation, same class as ExecutionCoordinator's own: the frozen
+/// <see cref="ActionRequest"/> carries no field for the path, so Local Files policy is expressible
+/// per action type and actor, not per path.
+/// </summary>
+internal sealed class ProtectionGatedWorkspaceClient(IWorkspaceClient inner, IProtectionClient protectionClient, string actor) : IWorkspaceClient
+{
+    public Task<string?> ReadFileAsync(string relativePath, CancellationToken cancellationToken = default)
+    {
+        var validation = protectionClient.Validate(new ActionRequest(
+            ActionId: Guid.NewGuid(),
+            ActionType: "WorkspaceRead",
+            Actor: actor,
+            RiskScore: 10));
+
+        if (validation.Verdict != ProtectionVerdict.Allow)
+        {
+            throw new UnauthorizedAccessException(
+                $"WorkspaceRead of '{relativePath}' by {actor} was not allowed: {validation.Verdict} - {validation.Reason}");
+        }
+
+        return inner.ReadFileAsync(relativePath, cancellationToken);
+    }
+
+    // ADR-007: the applicability check is a distinct Local Files action — it spawns a read-only
+    // `git apply --check` process rather than reading a file — so it is validated under its own
+    // ActionType, letting Protection policy treat it separately from WorkspaceRead.
+    public Task<PatchApplicabilityResult> CheckPatchAppliesAsync(string unifiedDiff, CancellationToken cancellationToken = default)
+    {
+        var validation = protectionClient.Validate(new ActionRequest(
+            ActionId: Guid.NewGuid(),
+            ActionType: "WorkspaceApplicabilityCheck",
+            Actor: actor,
+            RiskScore: 10));
+
+        if (validation.Verdict != ProtectionVerdict.Allow)
+        {
+            throw new UnauthorizedAccessException(
+                $"WorkspaceApplicabilityCheck by {actor} was not allowed: {validation.Verdict} - {validation.Reason}");
+        }
+
+        return inner.CheckPatchAppliesAsync(unifiedDiff, cancellationToken);
+    }
+}
+
+/// <summary>
+/// ADR-009: Universal Gates 1–2 (Constitution §0.8.1) at the composition root. Resolves each
+/// <c>artifact:&lt;sha256&gt;</c> evidence reference through the Artifact Registry (Part 8), runs
+/// the gates through <see cref="IsolatedUniversalGateRunner"/> (EOS.Infrastructure: an isolated
+/// throwaway copy of the workspace, never the real working tree), and hands the measured result to
+/// the Rule Engine (EOS.Gates) for the pass/fail decision (Protection §10.3). The run itself is a
+/// Local Files action (Protection §11) validated as <c>UniversalGateRun</c> before any process is
+/// spawned. Anything that cannot be resolved or run is reported as a failed gate, never a pass.
+/// </summary>
+internal sealed class ProtectionGatedUniversalGateClient(
+    ArtifactStore artifactStore,
+    IsolatedUniversalGateRunner runner,
+    RuleEngine ruleEngine,
+    IProtectionClient protectionClient,
+    string actor) : IUniversalGateClient
+{
+    public async Task<UniversalGateDecision> EvaluateAsync(DispatchedTask task, IReadOnlyList<string> evidenceRefs, CancellationToken cancellationToken = default)
+    {
+        var validation = protectionClient.Validate(new ActionRequest(
+            ActionId: Guid.NewGuid(),
+            ActionType: "UniversalGateRun",
+            Actor: actor,
+            RiskScore: 10));
+
+        if (validation.Verdict != ProtectionVerdict.Allow)
+        {
+            throw new UnauthorizedAccessException(
+                $"UniversalGateRun by {actor} was not allowed: {validation.Verdict} - {validation.Reason}");
+        }
+
+        var artifactRefs = evidenceRefs.Where(r => r.StartsWith("artifact:", StringComparison.Ordinal)).ToArray();
+        if (artifactRefs.Length != 1)
+        {
+            return Fail($"Expected exactly one artifact evidence reference, found {artifactRefs.Length}.");
+        }
+
+        var artifact = await artifactStore.GetByHashAsync(artifactRefs[0]["artifact:".Length..], cancellationToken);
+        if (artifact is null)
+        {
+            return Fail($"Evidence '{artifactRefs[0]}' is not registered in the Artifact Registry.");
+        }
+
+        var result = await runner.RunAsync(artifact.Content, cancellationToken);
+        var decision = ruleEngine.EvaluateUniversalGates(result);
+        return new UniversalGateDecision(decision.Allow, decision.Reason, result);
+    }
+
+    // The decision still belongs to the Rule Engine: an unresolvable artifact is a Gate 1 result
+    // of Failed, which the Rule Engine turns into the denial.
+    private UniversalGateDecision Fail(string reason)
+    {
+        var result = new UniversalGateResult(
+            new GateStepResult(GateStepStatus.Failed, reason),
+            new GateStepResult(GateStepStatus.NotApplicable, "Not run — Gate 1 failed."));
+        var decision = ruleEngine.EvaluateUniversalGates(result);
+        return new UniversalGateDecision(decision.Allow, decision.Reason, result);
     }
 }
 
