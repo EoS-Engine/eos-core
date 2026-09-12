@@ -204,11 +204,60 @@ public class ReasoningEngineTests
         Assert.Equal(ReasoningFailureMode.MissingContext, exception.FailureMode);
     }
 
+    // ADR-006 (Reasoning-Engine-Specification-v1.0 §21, corrected): a NON-EMPTY context that is
+    // still truncated after the one permitted Context Expansion is usable context, never
+    // MissingContext by itself. Expansion is still attempted exactly once, and the truncation
+    // remains observable through the Explanation's assumptions (§14).
     [Fact]
-    public async Task ReasonAsync_ThrowsMissingContext_WhenStillTruncatedAfterContextExpansion()
+    public async Task ReasonAsync_Succeeds_WhenContextIsNonEmptyAndStillTruncatedAfterContextExpansion()
     {
         var expansionPublisher = new CapturingContextExpansionRequestedEventPublisher();
         var contextProvider = new AlwaysTruncatedContextAcquisitionProvider();
+        var engine = CreateEngine(
+            new StubAIProviderClient(succeed: true, output: "an answer"), contextProvider,
+            contextExpansionRequestedEventPublisher: expansionPublisher);
+        var scope = new ReasoningContextScope(DomainTags: ["backend"], ProjectScope: null, Budget: 4096);
+        var request = CreateRequest("a goal") with { ContextScope = scope };
+
+        var decisions = await engine.ReasonAsync(request);
+
+        var decision = Assert.Single(decisions);
+        Assert.Equal("an answer", decision.SelectedHypothesis);
+        Assert.Equal(2, contextProvider.CallCount);
+        Assert.Equal(1, expansionPublisher.CallCount);
+        Assert.Contains(decision.Explanation.Assumptions, assumption => assumption.Contains("truncated", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // ADR-006: acceptance is not "solely because truncated" — a non-empty truncated payload is
+    // used even when no expansion is permitted at all (cap 0), and the truncation is still
+    // surfaced in the Explanation.
+    [Fact]
+    public async Task ReasonAsync_Succeeds_WhenContextIsNonEmptyAndTruncated_WithNoExpansionPermitted()
+    {
+        var expansionPublisher = new CapturingContextExpansionRequestedEventPublisher();
+        var contextProvider = new AlwaysTruncatedContextAcquisitionProvider();
+        var engine = CreateEngine(
+            new StubAIProviderClient(succeed: true, output: "an answer"), contextProvider,
+            options: new ReasoningEngineOptions(ContextExpansionCap: 0, LowConfidenceFloor: 0.3),
+            contextExpansionRequestedEventPublisher: expansionPublisher);
+        var scope = new ReasoningContextScope(DomainTags: ["backend"], ProjectScope: null, Budget: 4096);
+        var request = CreateRequest("a goal") with { ContextScope = scope };
+
+        var decisions = await engine.ReasonAsync(request);
+
+        var decision = Assert.Single(decisions);
+        Assert.Equal(1, contextProvider.CallCount);
+        Assert.Equal(0, expansionPublisher.CallCount);
+        Assert.Contains(decision.Explanation.Assumptions, assumption => assumption.Contains("truncated", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // ADR-006: the retained rule — EMPTY after the one permitted expansion is MissingContext,
+    // regardless of the truncation flag (first call empty+truncated, second call empty).
+    [Fact]
+    public async Task ReasonAsync_ThrowsMissingContext_WhenStillEmptyAfterContextExpansion()
+    {
+        var expansionPublisher = new CapturingContextExpansionRequestedEventPublisher();
+        var contextProvider = new EmptyTruncatedThenEmptyContextAcquisitionProvider();
         var engine = CreateEngine(
             new StubAIProviderClient(succeed: true, output: "an answer"), contextProvider,
             contextExpansionRequestedEventPublisher: expansionPublisher);
@@ -361,6 +410,18 @@ public class ReasoningEngineTests
         public Task<AcquiredContext> AcquireContextAsync(
             ReasoningContextScope scope, CancellationToken cancellationToken = default) =>
             Task.FromResult(new AcquiredContext([], Truncated: false));
+    }
+
+    private sealed class EmptyTruncatedThenEmptyContextAcquisitionProvider : IContextAcquisitionProvider
+    {
+        public int CallCount { get; private set; }
+
+        public Task<AcquiredContext> AcquireContextAsync(
+            ReasoningContextScope scope, CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult(new AcquiredContext([], Truncated: CallCount == 1));
+        }
     }
 
     private sealed class AlwaysTruncatedContextAcquisitionProvider : IContextAcquisitionProvider

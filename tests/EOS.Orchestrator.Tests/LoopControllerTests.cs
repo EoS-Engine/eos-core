@@ -33,7 +33,9 @@ public class LoopControllerTests
         CreateStackAsync(
             IPlanningClient? planningClient = null,
             IReasoningEngineClient? reasoningEngineClient = null,
-            IProtectionClient? protectionClient = null)
+            IProtectionClient? protectionClient = null,
+            ITaskExecutionClient? taskExecutionClient = null,
+            ITaskBlockedEventPublisher? taskBlockedEventPublisher = null)
     {
         var dispatchedTaskStore = new DispatchedTaskStore(TestConnectionString.SqlServer);
         await dispatchedTaskStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -41,7 +43,9 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, protectionClient ?? new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, protectionClient ?? new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            taskExecutionClient ?? new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(),
+            taskBlockedEventPublisher ?? new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
 
         var iterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
@@ -113,7 +117,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var iterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await iterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -141,7 +146,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var iterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await iterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -264,7 +270,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var realIterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await realIterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -297,7 +304,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var iterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await iterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -332,7 +340,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var realIterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await realIterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -364,7 +373,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var realIterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await realIterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -399,7 +409,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var realIterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await realIterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -476,7 +487,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var iterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await iterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -661,7 +673,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, recordingProtectionClient, new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, recordingProtectionClient, new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var iterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await iterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -877,7 +890,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var realIterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await realIterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -910,7 +924,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var realIterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await realIterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -941,7 +956,8 @@ public class LoopControllerTests
             dispatchedTaskStore, new FixedPlanQueryClient(), new FixedGoalPlanQueryClient(),
             new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, new AlwaysAllowProtectionClient(), new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new RecordingTaskCompletedEventPublisher(), new RecordingTaskBlockedEventPublisher(), new PassingUniversalGateClient());
         var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient());
         var realIterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
         await realIterationStore.EnsureTableExistsAsync(CancellationToken.None);
@@ -979,6 +995,161 @@ public class LoopControllerTests
 
         Assert.Equal(2, evaluated.Published.Count);
         Assert.All(evaluated.Published, entry => Assert.Null(entry.LoopHealthScore));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Post-Roadmap WP-A: step 10 now hands a dispatched Task to the Autonomous Role through the
+    // Execution Coordinator. These tests build a stack whose Scheduler genuinely has a Ready Task
+    // for the iteration to dispatch (real SQL Server store), with the role and events doubled.
+    // ---------------------------------------------------------------------------------------
+
+    private static async Task<(LoopController Controller, LoopIterationStore IterationStore, DispatchedTaskStore TaskStore, Guid TaskId, FailureTriggeringTaskBlockedEventPublisher BlockedPublisher)>
+        CreateStackWithDispatchableTaskAsync(ITaskExecutionClient executor, IProtectionClient? protectionClient = null)
+    {
+        var dispatchedTaskStore = new DispatchedTaskStore(TestConnectionString.SqlServer);
+        await dispatchedTaskStore.EnsureTableExistsAsync(CancellationToken.None);
+
+        // Foreign Ready rows in this shared table are ineligible here by the Scheduler's own
+        // WP-025 current-Plan filter: the FixedGoalPlanQueryClient below knows only this test's
+        // Plan, so exactly this test's Task is the one dispatched — nothing else is touched.
+        var planTask = new PlanTask(Guid.NewGuid(), "Change src/EOS.Web/DashboardWebHost.cs", ["web"], []);
+        var plan = new Plan(Guid.NewGuid(), Guid.NewGuid(), [planTask], 1, 1.0, null);
+        var scheduler = new Scheduler(
+            dispatchedTaskStore, new FixedPlanQueryClient(plan), new FixedGoalPlanQueryClient(plan),
+            new FixedTierResourceManagementClient(CapacityTier.Safe), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
+        scheduler.OnTaskCreated(planTask.TaskId, priority: 1);
+        await scheduler.OnPlannerGeneratedAsync(plan.PlanId, CancellationToken.None);
+
+        var blockedPublisher = new FailureTriggeringTaskBlockedEventPublisher();
+        var protection = protectionClient ?? new AlwaysAllowProtectionClient();
+        var executionCoordinator = new ExecutionCoordinator(
+            scheduler, dispatchedTaskStore, protection, new RecordingTaskStartedEventPublisher(),
+            executor, new RecordingTaskCompletedEventPublisher(), blockedPublisher, new PassingUniversalGateClient());
+        var progressMonitor = new ProgressMonitor(dispatchedTaskStore, new FixedGoalPlanQueryClient(plan));
+
+        var iterationStore = new LoopIterationStore(TestConnectionString.SqlServer);
+        await iterationStore.EnsureTableExistsAsync(CancellationToken.None);
+        var operationalModeStore = await CreateOperationalModeStoreAsync();
+
+        var controller = new LoopController(
+            new FixedPlanningClient(plan),
+            new FixedReasoningEngineClient(TestDecisions.Low()),
+            protection,
+            new FixedTierResourceManagementClient(CapacityTier.Safe),
+            scheduler,
+            executionCoordinator,
+            progressMonitor,
+            iterationStore,
+            new RecordingLoopIterationStartedEventPublisher(),
+            new RecordingLoopIterationCompletedEventPublisher(),
+            operationalModeStore,
+            new RecordingOperationalModeChangedEventPublisher(),
+            new RecordingLoopIterationEvaluatedEventPublisher());
+        blockedPublisher.Controller = controller;
+
+        return (controller, iterationStore, dispatchedTaskStore, planTask.TaskId, blockedPublisher);
+    }
+
+    [Fact]
+    public async Task RunIterationAsync_ExecutesTheDispatchedTask_AndCompletesTheIteration_WhenTheRoleSucceeds()
+    {
+        var executor = new FixedEvidenceTaskExecutionClient("artifact:" + new string('e', 64));
+        var (controller, iterationStore, taskStore, taskId, blockedPublisher) = await CreateStackWithDispatchableTaskAsync(executor);
+
+        await controller.RunIterationAsync(new TriggerContext("ManualRequest", "Change src/EOS.Web/DashboardWebHost.cs"), CancellationToken.None);
+
+        Assert.Equal([taskId], executor.ExecutedTaskIds);
+        Assert.Equal(TaskLifecycleState.Review, (await taskStore.GetByIdAsync(taskId, CancellationToken.None))!.State);
+        var iteration = (await iterationStore.GetLatestAsync(CancellationToken.None))!;
+        Assert.Equal("Completed", iteration.Outcome);
+        Assert.Equal(0, blockedPublisher.Invocations);
+    }
+
+    [Fact]
+    public async Task RunIterationAsync_DoesNotInvokeTheRole_WhenNothingIsEligibleForDispatch()
+    {
+        var executor = new FixedEvidenceTaskExecutionClient("artifact:" + new string('f', 64));
+        var (controller, _, _, _, _, _, _) = await CreateStackAsync(taskExecutionClient: executor);
+
+        await controller.RunIterationAsync(new TriggerContext("ManualRequest", "nothing to do"), CancellationToken.None);
+
+        Assert.Empty(executor.ExecutedTaskIds);
+    }
+
+    [Fact]
+    public async Task RunIterationAsync_EndsDenied_AndBlocksTheTask_WhenProtectionDeniesTaskCompletion()
+    {
+        var executor = new FixedEvidenceTaskExecutionClient("artifact:" + new string('a', 64));
+        var (controller, iterationStore, taskStore, taskId, _) =
+            await CreateStackWithDispatchableTaskAsync(executor, new DenyActionTypeProtectionClient("TaskCompletion"));
+
+        await controller.RunIterationAsync(new TriggerContext("ManualRequest", "Change src/EOS.Web/DashboardWebHost.cs"), CancellationToken.None);
+
+        Assert.Equal(TaskLifecycleState.Blocked, (await taskStore.GetByIdAsync(taskId, CancellationToken.None))!.State);
+        var iterations = await GetIterationsForAsync(iterationStore, 2);
+        var outer = iterations.Single(i => i.TriggerSource == "ManualRequest");
+        Assert.Equal("Denied", outer.Outcome);
+    }
+
+    // The approved bounded-recursion proof: one execution failure → the Task is Blocked, exactly
+    // one TaskBlocked is published, the already-wired "Failure" trigger runs exactly one nested
+    // iteration entering at step 11 (which never dispatches, executes, or blocks anything), and
+    // the outer iteration completes with outcome "Failed". Any recursion trips the publisher's
+    // guard and fails this test.
+    [Fact]
+    public async Task RunIterationAsync_ExecutionFailure_ProducesExactlyOneBoundedNestedFailureIteration()
+    {
+        var executor = new ThrowingTaskExecutionClient();
+        var (controller, iterationStore, taskStore, taskId, blockedPublisher) = await CreateStackWithDispatchableTaskAsync(executor);
+
+        await controller.RunIterationAsync(new TriggerContext("ManualRequest", "Change src/EOS.Web/DashboardWebHost.cs"), CancellationToken.None);
+
+        Assert.Equal(1, executor.CallCount);
+        Assert.Equal(1, blockedPublisher.Invocations);
+        var persisted = (await taskStore.GetByIdAsync(taskId, CancellationToken.None))!;
+        Assert.Equal(TaskLifecycleState.Blocked, persisted.State);
+        Assert.StartsWith("Execution failed:", persisted.BlockedReason);
+
+        var iterations = await GetIterationsForAsync(iterationStore, 2);
+        var outer = Assert.Single(iterations, i => i.TriggerSource == "ManualRequest");
+        var nested = Assert.Single(iterations, i => i.TriggerSource == "Failure");
+        Assert.Equal("Failed", outer.Outcome);
+        Assert.Equal("Completed", outer.State);
+        Assert.Contains(10, outer.StepsTraversed);
+        Assert.Equal(11, nested.EntryStep);
+        Assert.Equal("Completed", nested.Outcome);
+        Assert.DoesNotContain(10, nested.StepsTraversed);
+        Assert.True(nested.StartedAt >= outer.StartedAt);
+    }
+
+    private static async Task<List<LoopIteration>> GetIterationsForAsync(LoopIterationStore store, int expectedCount)
+    {
+        // LoopIterationStore exposes only GetLatestAsync; the two iterations this test produced
+        // are the latest rows, distinguished by TriggerSource. Read the latest, then the one
+        // before it by querying the store's own table through the same connection string.
+        var latest = (await store.GetLatestAsync(CancellationToken.None))!;
+        var iterations = new List<LoopIteration> { latest };
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(TestConnectionString.SqlServer);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT TOP (@Count) IterationId, TriggerSource, EntryStep, State, StepsTraversedJson, Outcome, StartedAt, CompletedAt
+            FROM LoopIteration ORDER BY StartedAt DESC, IterationId DESC
+            """;
+        command.Parameters.AddWithValue("@Count", expectedCount);
+        await using var reader = await command.ExecuteReaderAsync();
+        iterations.Clear();
+        while (await reader.ReadAsync())
+        {
+            iterations.Add(new LoopIteration(
+                reader.GetGuid(0), reader.GetString(1), reader.GetInt32(2), reader.GetString(3),
+                System.Text.Json.JsonSerializer.Deserialize<int[]>(reader.GetString(4))!,
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.GetFieldValue<DateTimeOffset>(6),
+                reader.IsDBNull(7) ? null : reader.GetFieldValue<DateTimeOffset>(7)));
+        }
+
+        return iterations;
     }
 }
 
