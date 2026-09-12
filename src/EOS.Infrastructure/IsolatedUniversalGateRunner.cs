@@ -125,6 +125,18 @@ public sealed class IsolatedUniversalGateRunner
             // computed from the (patched) copy's solution and project files — so a consumer broken
             // by the change is compiled. Building the closure's roots compiles every member.
             var closure = ComputeDependencyClosure(copyRoot, affectedProjects);
+            if (closure.Projects.Count > 0 && closure.Roots.Count == 0)
+            {
+                // Fail closed: a non-empty closure with no root can only be a cyclic
+                // ProjectReference graph (possible because the patched copy's project files are
+                // what is read). Nothing would be built, so nothing may be reported as passed.
+                return new UniversalGateResult(
+                    new GateStepResult(
+                        GateStepStatus.Failed,
+                        $"The affected projects form a cyclic ProjectReference graph; no build was run: {string.Join(", ", closure.Projects)}"),
+                    NotRun("Gate 1 failed."));
+            }
+
             foreach (var project in closure.Roots)
             {
                 var build = await RunProcessAsync(copyRoot, _dotnetExecutable, ["build", project, "--no-restore", "-nologo"], null, cancellationToken);

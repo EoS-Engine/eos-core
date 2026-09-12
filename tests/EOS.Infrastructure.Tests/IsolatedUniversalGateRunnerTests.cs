@@ -428,6 +428,88 @@ public class IsolatedUniversalGateRunnerTests : IDisposable
     }
 
     // ------------------------------------------------------------------------------------
+    // Qodo #3 (PR #29): a non-empty closure with no root (cyclic ProjectReference graph read
+    // from the patched copy) must fail Gate 1 — never pass without a single build.
+    // ------------------------------------------------------------------------------------
+
+    [Fact]
+    public void ComputeDependencyClosure_OfACyclicGraph_HasProjectsButNoRoots()
+    {
+        var root = CreateCyclicWorkspace();
+
+        var closure = IsolatedUniversalGateRunner.ComputeDependencyClosure(root, ["src/EOS.CycleA/EOS.CycleA.csproj"]);
+
+        Assert.Equal(["src/EOS.CycleA/EOS.CycleA.csproj", "src/EOS.CycleB/EOS.CycleB.csproj"], closure.Projects);
+        Assert.Empty(closure.Roots);
+    }
+
+    [Fact]
+    public void ComputeDependencyClosure_OfAnAcyclicGraph_StillHasARoot()
+    {
+        var root = CreateCyclicWorkspace(cyclic: false);
+
+        var closure = IsolatedUniversalGateRunner.ComputeDependencyClosure(root, ["src/EOS.CycleA/EOS.CycleA.csproj"]);
+
+        Assert.Equal(["src/EOS.CycleA/EOS.CycleA.csproj", "src/EOS.CycleB/EOS.CycleB.csproj"], closure.Projects);
+        Assert.Equal(["src/EOS.CycleB/EOS.CycleB.csproj"], closure.Roots);
+    }
+
+    [Fact]
+    public async Task RunAsync_FailsGate1_WithoutBuildingAnything_WhenThePatchedGraphIsCyclic()
+    {
+        var root = CreateCyclicWorkspace();
+        var invocations = Path.Combine(_scratch, "dotnet-invocations");
+        var stub = CreateDotnetStub($"#!/bin/sh\necho \"$@\" >> '{invocations}'\nexit 0\n");
+        var runner = new IsolatedUniversalGateRunner(root, dotnetExecutable: stub);
+        var diff = "--- a/src/EOS.CycleA/A.cs\n+++ b/src/EOS.CycleA/A.cs\n@@ -1,1 +1,2 @@\n+// changed\n class A {}\n";
+
+        var result = await runner.RunAsync(diff);
+
+        Assert.Equal(GateStepStatus.Failed, result.BuildGate.Status);
+        Assert.Contains("cyclic ProjectReference graph", result.BuildGate.Detail);
+        Assert.Contains("src/EOS.CycleA/EOS.CycleA.csproj", result.BuildGate.Detail);
+        Assert.Equal(GateStepStatus.NotApplicable, result.TestGate.Status);
+        Assert.False(File.Exists(invocations), "no dotnet build must have been attempted");
+    }
+
+    [Fact]
+    public async Task RunAsync_BuildsTheRoot_WhenTheSameGraphIsAcyclic()
+    {
+        var root = CreateCyclicWorkspace(cyclic: false);
+        var invocations = Path.Combine(_scratch, "dotnet-invocations");
+        var stub = CreateDotnetStub($"#!/bin/sh\necho \"$@\" >> '{invocations}'\nexit 0\n");
+        var runner = new IsolatedUniversalGateRunner(root, dotnetExecutable: stub);
+        var diff = "--- a/src/EOS.CycleA/A.cs\n+++ b/src/EOS.CycleA/A.cs\n@@ -1,1 +1,2 @@\n+// changed\n class A {}\n";
+
+        var result = await runner.RunAsync(diff);
+
+        Assert.Equal(GateStepStatus.Passed, result.BuildGate.Status);
+        var built = Assert.Single(await File.ReadAllLinesAsync(invocations));
+        Assert.StartsWith("build src/EOS.CycleB/EOS.CycleB.csproj", built);
+    }
+
+    /// <summary>
+    /// A two-project workspace with its own EOS.slnx: B references A always; A references B only
+    /// when <paramref name="cyclic"/> — the minimal graph whose closure has no root.
+    /// </summary>
+    private string CreateCyclicWorkspace(bool cyclic = true)
+    {
+        var root = Path.Combine(_scratch, "cycle-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "src", "EOS.CycleA"));
+        Directory.CreateDirectory(Path.Combine(root, "src", "EOS.CycleB"));
+        File.WriteAllText(
+            Path.Combine(root, "EOS.slnx"),
+            "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/EOS.CycleA/EOS.CycleA.csproj\" />\n    <Project Path=\"src/EOS.CycleB/EOS.CycleB.csproj\" />\n  </Folder>\n</Solution>\n");
+        var aReference = cyclic ? "  <ItemGroup>\n    <ProjectReference Include=\"..\\EOS.CycleB\\EOS.CycleB.csproj\" />\n  </ItemGroup>\n" : string.Empty;
+        File.WriteAllText(Path.Combine(root, "src", "EOS.CycleA", "EOS.CycleA.csproj"), $"<Project Sdk=\"Microsoft.NET.Sdk\">\n{aReference}</Project>\n");
+        File.WriteAllText(
+            Path.Combine(root, "src", "EOS.CycleB", "EOS.CycleB.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <ItemGroup>\n    <ProjectReference Include=\"..\\EOS.CycleA\\EOS.CycleA.csproj\" />\n  </ItemGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(root, "src", "EOS.CycleA", "A.cs"), "class A {}\n");
+        return root;
+    }
+
+    // ------------------------------------------------------------------------------------
     // Helpers.
     // ------------------------------------------------------------------------------------
 

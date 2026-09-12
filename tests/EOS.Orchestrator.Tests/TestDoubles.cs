@@ -748,3 +748,39 @@ internal sealed class NeverCalledUniversalGateClient : IUniversalGateClient
     public Task<UniversalGateDecision> EvaluateAsync(DispatchedTask task, IReadOnlyList<string> evidenceRefs, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("EvaluateAsync must not be called by this test.");
 }
+
+// Qodo #1 (PR #29): doubles that complete normally but cancel the caller's token before returning,
+// so the coordinator reaches its terminal write with an already-cancelled token — deterministic,
+// no timing involved.
+
+/// <summary>Executor double returning the given evidence after cancelling the supplied token.</summary>
+internal sealed class EvidenceThenCancelTaskExecutionClient(CancellationTokenSource cancellationTokenSource, params string[] evidenceRefs) : ITaskExecutionClient
+{
+    public async Task<TaskExecutionResult> ExecuteAsync(DispatchedTask task, CancellationToken cancellationToken = default)
+    {
+        await cancellationTokenSource.CancelAsync();
+        return new TaskExecutionResult(evidenceRefs);
+    }
+}
+
+/// <summary>Executor double that fails like a role after cancelling the supplied token.</summary>
+internal sealed class ThrowThenCancelTaskExecutionClient(CancellationTokenSource cancellationTokenSource) : ITaskExecutionClient
+{
+    public async Task<TaskExecutionResult> ExecuteAsync(DispatchedTask task, CancellationToken cancellationToken = default)
+    {
+        await cancellationTokenSource.CancelAsync();
+        throw new InvalidOperationException("role failed after cancellation was requested");
+    }
+}
+
+/// <summary>Gate double returning the given decision after cancelling the supplied token.</summary>
+internal sealed class DecideThenCancelUniversalGateClient(CancellationTokenSource cancellationTokenSource, bool passed) : IUniversalGateClient
+{
+    public async Task<UniversalGateDecision> EvaluateAsync(DispatchedTask task, IReadOnlyList<string> evidenceRefs, CancellationToken cancellationToken = default)
+    {
+        await cancellationTokenSource.CancelAsync();
+        var status = passed ? GateStepStatus.Passed : GateStepStatus.Failed;
+        var result = new UniversalGateResult(new GateStepResult(status, "decided"), new GateStepResult(GateStepStatus.NotApplicable, "n/a"));
+        return new UniversalGateDecision(passed, passed ? null : "Universal Gate 1 (build/static analysis) failed: decided", result);
+    }
+}

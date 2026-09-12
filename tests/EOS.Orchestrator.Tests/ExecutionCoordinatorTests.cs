@@ -516,6 +516,111 @@ public class ExecutionCoordinatorTests
         Assert.Equal(runningBaseline - 1, await store.CountByStateAsync(TaskLifecycleState.Running, CancellationToken.None));
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Qodo #1 (PR #29): once the terminal outcome is decided, a cancellation that has already
+    // been requested must not abort the terminal write and leave the Task Running. Each double
+    // cancels the token *before* returning, so the coordinator reaches BlockAsync / the Review
+    // upsert with a cancelled token — deterministically, without timing.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ExecuteAndCompleteAsync_PersistsBlocked_WhenTheTokenIsCancelledBeforeTheGateFailureWrite()
+    {
+        var (store, running) = await CreateRunningTaskAsync();
+        var runningBaseline = await store.CountByStateAsync(TaskLifecycleState.Running, CancellationToken.None);
+        using var cancellation = new CancellationTokenSource();
+        var completed = new RecordingTaskCompletedEventPublisher();
+        var blocked = new RecordingTaskBlockedEventPublisher();
+        var coordinator = CreateCompleter(
+            store, new AlwaysAllowProtectionClient(), new FixedEvidenceTaskExecutionClient("artifact:" + new string('4', 64)),
+            completed, blocked, new DecideThenCancelUniversalGateClient(cancellation, passed: false));
+
+        var result = await coordinator.ExecuteAndCompleteAsync(running, cancellation.Token);
+
+        Assert.True(cancellation.IsCancellationRequested);
+        Assert.Equal(ExecutionOutcome.ExecutionFailed, result.Outcome);
+        Assert.Equal(TaskLifecycleState.Blocked, (await store.GetByIdAsync(running.TaskId, CancellationToken.None))!.State);
+        Assert.Single(blocked.Published);
+        Assert.Empty(completed.Published);
+        Assert.Equal(runningBaseline - 1, await store.CountByStateAsync(TaskLifecycleState.Running, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExecuteAndCompleteAsync_PersistsBlocked_WhenTheTokenIsCancelledBeforeTheNoEvidenceWrite()
+    {
+        var (store, running) = await CreateRunningTaskAsync();
+        using var cancellation = new CancellationTokenSource();
+        var blocked = new RecordingTaskBlockedEventPublisher();
+        var coordinator = CreateCompleter(
+            store, new AlwaysAllowProtectionClient(), new EvidenceThenCancelTaskExecutionClient(cancellation),
+            new RecordingTaskCompletedEventPublisher(), blocked, new NeverCalledUniversalGateClient());
+
+        var result = await coordinator.ExecuteAndCompleteAsync(running, cancellation.Token);
+
+        Assert.Equal(ExecutionOutcome.ExecutionFailed, result.Outcome);
+        Assert.Equal(TaskLifecycleState.Blocked, (await store.GetByIdAsync(running.TaskId, CancellationToken.None))!.State);
+        Assert.Single(blocked.Published);
+    }
+
+    [Fact]
+    public async Task ExecuteAndCompleteAsync_PersistsBlocked_WhenTheTokenIsCancelledBeforeTheRoleFailureWrite()
+    {
+        var (store, running) = await CreateRunningTaskAsync();
+        using var cancellation = new CancellationTokenSource();
+        var blocked = new RecordingTaskBlockedEventPublisher();
+        var coordinator = CreateCompleter(
+            store, new AlwaysAllowProtectionClient(), new ThrowThenCancelTaskExecutionClient(cancellation),
+            new RecordingTaskCompletedEventPublisher(), blocked, new NeverCalledUniversalGateClient());
+
+        var result = await coordinator.ExecuteAndCompleteAsync(running, cancellation.Token);
+
+        Assert.Equal(ExecutionOutcome.ExecutionFailed, result.Outcome);
+        Assert.Contains("role failed after cancellation", result.Error);
+        Assert.Equal(TaskLifecycleState.Blocked, (await store.GetByIdAsync(running.TaskId, CancellationToken.None))!.State);
+        Assert.Single(blocked.Published);
+    }
+
+    [Fact]
+    public async Task ExecuteAndCompleteAsync_PersistsBlocked_WhenTheTokenIsCancelledBeforeTheProtectionDenialWrite()
+    {
+        var (store, running) = await CreateRunningTaskAsync();
+        using var cancellation = new CancellationTokenSource();
+        var blocked = new RecordingTaskBlockedEventPublisher();
+        var coordinator = CreateCompleter(
+            store, new DenyActionTypeProtectionClient("TaskCompletion"), new FixedEvidenceTaskExecutionClient("artifact:" + new string('5', 64)),
+            new RecordingTaskCompletedEventPublisher(), blocked, new DecideThenCancelUniversalGateClient(cancellation, passed: true));
+
+        var result = await coordinator.ExecuteAndCompleteAsync(running, cancellation.Token);
+
+        Assert.Equal(ExecutionOutcome.ProtectionDenied, result.Outcome);
+        Assert.Equal(TaskLifecycleState.Blocked, (await store.GetByIdAsync(running.TaskId, CancellationToken.None))!.State);
+        Assert.Single(blocked.Published);
+    }
+
+    [Fact]
+    public async Task ExecuteAndCompleteAsync_PersistsReview_AndPublishesTaskCompleted_WhenTheTokenIsCancelledBeforeTheReviewWrite()
+    {
+        var (store, running) = await CreateRunningTaskAsync();
+        var runningBaseline = await store.CountByStateAsync(TaskLifecycleState.Running, CancellationToken.None);
+        using var cancellation = new CancellationTokenSource();
+        var evidence = "artifact:" + new string('6', 64);
+        var completed = new RecordingTaskCompletedEventPublisher();
+        var blocked = new RecordingTaskBlockedEventPublisher();
+        var coordinator = CreateCompleter(
+            store, new AlwaysAllowProtectionClient(), new FixedEvidenceTaskExecutionClient(evidence),
+            completed, blocked, new DecideThenCancelUniversalGateClient(cancellation, passed: true));
+
+        var result = await coordinator.ExecuteAndCompleteAsync(running, cancellation.Token);
+
+        Assert.True(cancellation.IsCancellationRequested);
+        Assert.Equal(ExecutionOutcome.Completed, result.Outcome);
+        Assert.Equal(TaskLifecycleState.Review, (await store.GetByIdAsync(running.TaskId, CancellationToken.None))!.State);
+        var published = Assert.Single(completed.Published);
+        Assert.Equal([evidence], published.EvidenceRefs);
+        Assert.Empty(blocked.Published);
+        Assert.Equal(runningBaseline - 1, await store.CountByStateAsync(TaskLifecycleState.Running, CancellationToken.None));
+    }
+
     private sealed class ThrowingTaskBlockedEventPublisher : ITaskBlockedEventPublisher
     {
         public void PublishTaskBlocked(Guid taskId, string reason) =>

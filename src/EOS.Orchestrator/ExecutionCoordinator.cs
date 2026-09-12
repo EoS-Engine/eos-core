@@ -80,7 +80,9 @@ public sealed class ExecutionCoordinator(
     /// <see cref="DispatchedTask.BlockedReason"/> root-cause note) and published as
     /// <c>TaskBlocked</c>, so a dispatched Task never remains <c>Running</c> and the Scheduler's
     /// concurrency slot (which counts <c>Running</c> only) is released in the same call that
-    /// consumed it. <c>Blocked → Retry</c> is the unwired <see cref="RetryManager"/> path — not
+    /// consumed it. Terminal writes (<c>Blocked</c> and <c>Review</c>) are performed with a
+    /// non-cancellable token so that a cancellation arriving after the outcome is decided cannot
+    /// leave the Task <c>Running</c>. <c>Blocked → Retry</c> is the unwired <see cref="RetryManager"/> path — not
     /// invoked here. A process crash mid-execution can still leave <c>Running</c>; recovery is
     /// explicitly deferred (§15.8/§19).
     ///
@@ -128,13 +130,13 @@ public sealed class ExecutionCoordinator(
         }
         catch (Exception ex)
         {
-            var blocked = await BlockAsync(task, $"Execution failed: {ex.Message}", cancellationToken);
+            var blocked = await BlockAsync(task, $"Execution failed: {ex.Message}");
             return new ExecutionResult(ExecutionOutcome.ExecutionFailed, blocked, [], ex.Message);
         }
 
         if (execution.EvidenceRefs.Length == 0)
         {
-            var blocked = await BlockAsync(task, "Execution failed: the executing role returned no evidence reference.", cancellationToken);
+            var blocked = await BlockAsync(task, "Execution failed: the executing role returned no evidence reference.");
             return new ExecutionResult(ExecutionOutcome.ExecutionFailed, blocked, [], "The executing role returned no evidence reference.");
         }
 
@@ -160,7 +162,7 @@ public sealed class ExecutionCoordinator(
         {
             // Fail closed: a gate that could not be evaluated has not passed (§0.8.3).
             var reason = $"Universal Gate evaluation failed: {ex.Message}. Evidence: {string.Join(", ", execution.EvidenceRefs)}";
-            var blocked = await BlockAsync(task, reason, cancellationToken);
+            var blocked = await BlockAsync(task, reason);
             return new ExecutionResult(ExecutionOutcome.ExecutionFailed, blocked, execution.EvidenceRefs, reason);
         }
 
@@ -169,7 +171,7 @@ public sealed class ExecutionCoordinator(
             // §6.2 Running → Blocked, actor EOS.Gates, evidence "Gate failure record" — the Rule
             // Engine's reason names the failing gate; the registered artifact stays immutable.
             var reason = $"Universal Gate failure: {gates.FailureReason ?? "no reason supplied"}. Evidence: {string.Join(", ", execution.EvidenceRefs)}";
-            var blocked = await BlockAsync(task, reason, cancellationToken);
+            var blocked = await BlockAsync(task, reason);
             return new ExecutionResult(ExecutionOutcome.ExecutionFailed, blocked, execution.EvidenceRefs, reason);
         }
 
@@ -187,21 +189,28 @@ public sealed class ExecutionCoordinator(
             // registered artifact stays immutable and is cited in the root-cause note; no Review
             // transition and no TaskCompleted are ever produced for a denied completion.
             var reason = $"TaskCompletion denied: {validation.Verdict} — {validation.Reason ?? "no reason supplied"}. Evidence: {string.Join(", ", execution.EvidenceRefs)}";
-            var blocked = await BlockAsync(task, reason, cancellationToken);
+            var blocked = await BlockAsync(task, reason);
             return new ExecutionResult(ExecutionOutcome.ProtectionDenied, blocked, execution.EvidenceRefs, reason);
         }
 
+        // Terminal write (see BlockAsync): never cancellable once the completion decision is made.
         var review = task with { State = TaskLifecycleState.Review };
-        await store.UpsertAsync(review, cancellationToken);
+        await store.UpsertAsync(review, CancellationToken.None);
         taskCompletedEventPublisher.PublishTaskCompleted(review.TaskId, execution.EvidenceRefs);
 
         return new ExecutionResult(ExecutionOutcome.Completed, review, execution.EvidenceRefs, null);
     }
 
-    private async Task<DispatchedTask> BlockAsync(DispatchedTask task, string reason, CancellationToken cancellationToken = default)
+    // Terminal persistence is never performed with the caller's token: once a Running Task's
+    // terminal outcome (Blocked or Review) has been decided, a concurrent cancellation must not be
+    // able to abort the lifecycle write and leave the Task Running without its TaskBlocked /
+    // TaskCompleted event (the same compensating-write rule the two OperationCanceledException
+    // handlers above already apply). The role execution and gate evaluation themselves remain
+    // fully cancellable; a persistence failure here still propagates unchanged.
+    private async Task<DispatchedTask> BlockAsync(DispatchedTask task, string reason)
     {
         var blocked = task with { State = TaskLifecycleState.Blocked, BlockedReason = reason };
-        await store.UpsertAsync(blocked, cancellationToken);
+        await store.UpsertAsync(blocked, CancellationToken.None);
         taskBlockedEventPublisher.PublishTaskBlocked(blocked.TaskId, reason);
         return blocked;
     }
