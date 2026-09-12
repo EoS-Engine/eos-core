@@ -269,6 +269,165 @@ public class IsolatedUniversalGateRunnerTests : IDisposable
     }
 
     // ------------------------------------------------------------------------------------
+    // H-1: the child environment is explicitly constructed — EOS runtime variables never flow.
+    // ------------------------------------------------------------------------------------
+
+    [Fact]
+    public void BuildChildEnvironment_KeepsOnlyAllowlistedVariables_AndDropsEveryEosVariable()
+    {
+        var parent = new System.Collections.Hashtable
+        {
+            ["PATH"] = "/usr/bin",
+            ["HOME"] = "/home/x",
+            ["DOTNET_ROOT"] = "/usr/lib/dotnet",
+            ["NUGET_PACKAGES"] = "/pkgs",
+            ["EOS_SQLSERVER_CONNECTION_STRING"] = "Server=live",
+            ["EOS_REDIS_CONNECTION_STRING"] = "live:6379",
+            ["EOS_CHROMADB_ENDPOINT"] = "http://live:8000",
+            ["eos_lowercase"] = "x",
+            ["AWS_SECRET_ACCESS_KEY"] = "s",
+            ["LD_PRELOAD"] = "/evil.so",
+        };
+
+        var child = IsolatedUniversalGateRunner.BuildChildEnvironment(parent);
+
+        Assert.Equal(["DOTNET_ROOT", "HOME", "NUGET_PACKAGES", "PATH"], child.Keys.Order(StringComparer.Ordinal));
+        Assert.DoesNotContain(child.Keys, k => k.StartsWith("EOS_", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task RunAsync_PassesTheChildProcess_OnlyTheAllowlistedEnvironment_NeverEosRuntimeVariables()
+    {
+        var root = CreateFakeWorkspace();
+        var envDump = Path.Combine(_scratch, "child-env");
+        var stub = CreateDotnetStub($"#!/bin/sh\n/usr/bin/env > '{envDump}'\nexit 1\n");
+        var runner = new IsolatedUniversalGateRunner(root, dotnetExecutable: stub);
+        var previousProbe = Environment.GetEnvironmentVariable("EOS_GATE_PROBE");
+        var previousSql = Environment.GetEnvironmentVariable("EOS_SQLSERVER_CONNECTION_STRING");
+        Environment.SetEnvironmentVariable("EOS_GATE_PROBE", "must-not-reach-the-child");
+        Environment.SetEnvironmentVariable("EOS_SQLSERVER_CONNECTION_STRING", previousSql ?? "Server=live;Database=live");
+        try
+        {
+            var result = await runner.RunAsync(FakeDiff());
+
+            Assert.Equal(GateStepStatus.Failed, result.BuildGate.Status);
+            var childEnvironment = await File.ReadAllLinesAsync(envDump);
+            Assert.DoesNotContain(childEnvironment, line => line.StartsWith("EOS_", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(childEnvironment, line => line.Contains("must-not-reach-the-child", StringComparison.Ordinal));
+            Assert.Contains(childEnvironment, line => line.StartsWith("PATH=", StringComparison.Ordinal));
+            Assert.Contains("DOTNET_NOLOGO=1", childEnvironment);
+            Assert.Contains("MSBUILDDISABLENODEREUSE=1", childEnvironment);
+            Assert.Contains(childEnvironment, line => line.StartsWith("GIT_CEILING_DIRECTORIES=", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EOS_GATE_PROBE", previousProbe);
+            Environment.SetEnvironmentVariable("EOS_SQLSERVER_CONNECTION_STRING", previousSql);
+        }
+    }
+
+    // ------------------------------------------------------------------------------------
+    // H-2: Gate 1 builds the reverse dependency closure, so broken consumers are compiled.
+    // ------------------------------------------------------------------------------------
+
+    [Fact]
+    public void ComputeDependencyClosure_IncludesEveryTransitiveConsumer_AndBuildsOnlyRoots()
+    {
+        var root = FindRepositoryRoot();
+
+        var closure = IsolatedUniversalGateRunner.ComputeDependencyClosure(root, ["src/EOS.Gates/EOS.Gates.csproj"]);
+
+        Assert.Contains("src/EOS.Gates/EOS.Gates.csproj", closure.Projects);
+        Assert.Contains(GatesTestProject, closure.Projects);
+        Assert.Contains("src/EOS.Runner/EOS.Runner.csproj", closure.Projects);
+        Assert.Contains("tests/EOS.Runner.Tests/EOS.Runner.Tests.csproj", closure.Projects);
+        Assert.DoesNotContain("src/EOS.Contracts/EOS.Contracts.csproj", closure.Projects);
+        Assert.DoesNotContain("src/EOS.Gates/EOS.Gates.csproj", closure.Roots);
+        Assert.DoesNotContain("src/EOS.Runner/EOS.Runner.csproj", closure.Roots);
+        Assert.Contains(GatesTestProject, closure.Roots);
+        Assert.Contains("tests/EOS.Runner.Tests/EOS.Runner.Tests.csproj", closure.Roots);
+        Assert.All(closure.Roots, r => Assert.Contains(r, closure.Projects));
+    }
+
+    [Fact]
+    public void ComputeDependencyClosure_OfATestProject_IsTheTestProjectItself()
+    {
+        var closure = IsolatedUniversalGateRunner.ComputeDependencyClosure(FindRepositoryRoot(), [GatesTestProject]);
+
+        Assert.Equal([GatesTestProject], closure.Projects);
+        Assert.Equal([GatesTestProject], closure.Roots);
+    }
+
+    // Regression for Qodo H-2: the upstream project still compiles; a consumer does not.
+    [Fact]
+    public async Task RunAsync_FailsGate1_WhenTheChangedProjectCompiles_ButADependentProjectBreaks()
+    {
+        var root = FindRepositoryRoot();
+        var runner = new IsolatedUniversalGateRunner(root);
+        var diff = ReplaceLine(root, ContractsSource, "    NotApplicable,", "    NotApplicableRenamed,");
+
+        var result = await runner.RunAsync(diff);
+
+        Assert.Equal(GateStepStatus.Failed, result.BuildGate.Status);
+        Assert.Contains("error CS0117", result.BuildGate.Detail); // 'GateStepStatus' does not contain a definition for 'NotApplicable'
+        Assert.DoesNotContain("EOS.Contracts.csproj]", result.BuildGate.Detail); // the failure is in a consumer, not in the changed project
+        Assert.Equal(GateStepStatus.NotApplicable, result.TestGate.Status);
+    }
+
+    // ------------------------------------------------------------------------------------
+    // M-1: Gate 2 requires executed tests, not just exit code 0.
+    // ------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task RunAsync_FailsGate2_WhenTheTestProcessExitsZero_ButNoResultFileIsWritten()
+    {
+        var root = CreateFakeWorkspace();
+        var runner = new IsolatedUniversalGateRunner(root, dotnetExecutable: CreateTestStub(trxExecuted: null));
+
+        var result = await runner.RunAsync(FakeTestDiff());
+
+        Assert.Equal(GateStepStatus.Passed, result.BuildGate.Status);
+        Assert.Equal(GateStepStatus.Failed, result.TestGate.Status);
+        Assert.Contains("no recorded tests", result.TestGate.Detail);
+    }
+
+    [Fact]
+    public async Task RunAsync_FailsGate2_WhenTheTestProcessExitsZero_ButZeroTestsExecuted()
+    {
+        var root = CreateFakeWorkspace();
+        var runner = new IsolatedUniversalGateRunner(root, dotnetExecutable: CreateTestStub(trxExecuted: 0));
+
+        var result = await runner.RunAsync(FakeTestDiff());
+
+        Assert.Equal(GateStepStatus.Passed, result.BuildGate.Status);
+        Assert.Equal(GateStepStatus.Failed, result.TestGate.Status);
+        Assert.Contains("zero tests", result.TestGate.Detail);
+    }
+
+    [Fact]
+    public async Task RunAsync_PassesGate2_WhenTheTestProcessExitsZero_AndTestsExecuted()
+    {
+        var root = CreateFakeWorkspace();
+        var runner = new IsolatedUniversalGateRunner(root, dotnetExecutable: CreateTestStub(trxExecuted: 3));
+
+        var result = await runner.RunAsync(FakeTestDiff());
+
+        Assert.Equal(GateStepStatus.Passed, result.BuildGate.Status);
+        Assert.Equal(GateStepStatus.Passed, result.TestGate.Status);
+        Assert.Contains("3 executed", result.TestGate.Detail);
+    }
+
+    [Fact]
+    public void ReadExecutedTestCount_ReturnsNull_ForAMissingOrMalformedFile()
+    {
+        var malformed = Path.Combine(_scratch, "bad.trx");
+        File.WriteAllText(malformed, "not xml");
+
+        Assert.Null(IsolatedUniversalGateRunner.ReadExecutedTestCount(Path.Combine(_scratch, "missing.trx")));
+        Assert.Null(IsolatedUniversalGateRunner.ReadExecutedTestCount(malformed));
+    }
+
+    // ------------------------------------------------------------------------------------
     // Helpers.
     // ------------------------------------------------------------------------------------
 
@@ -365,8 +524,58 @@ public class IsolatedUniversalGateRunnerTests : IDisposable
         Directory.CreateDirectory(Path.Combine(root, "src", "EOS.Fake"));
         File.WriteAllText(Path.Combine(root, "src", "EOS.Fake", "EOS.Fake.csproj"), "<Project />\n");
         File.WriteAllText(Path.Combine(root, "src", "EOS.Fake", "Fake.cs"), "line one\nline two\nline three\n");
+        Directory.CreateDirectory(Path.Combine(root, "tests", "EOS.Fake.Tests"));
+        File.WriteAllText(Path.Combine(root, "tests", "EOS.Fake.Tests", "EOS.Fake.Tests.csproj"), "<Project />\n");
         return root;
     }
+
+    /// <summary>
+    /// A stub <c>dotnet</c> for the fake workspace: <c>build</c> exits 0; <c>test</c> exits 0 and,
+    /// when <paramref name="trxExecuted"/> is given, writes a TRX with that executed count to the
+    /// results directory the runner passed via <c>--results-directory</c>.
+    /// </summary>
+    private string CreateTestStub(int? trxExecuted)
+    {
+        var writeTrx = trxExecuted is null
+            ? string.Empty
+            : $"""
+              dir=""
+              prev=""
+              for a in "$@"; do if [ "$prev" = "--results-directory" ]; then dir="$a"; fi; prev="$a"; done
+              /usr/bin/mkdir -p "$dir"
+              printf '<?xml version="1.0"?><TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><ResultSummary outcome="Completed"><Counters total="{trxExecuted}" executed="{trxExecuted}" passed="{trxExecuted}" failed="0" /></ResultSummary></TestRun>' > "$dir/gate.trx"
+
+              """;
+        return CreateDotnetStub($"#!/bin/sh\nif [ \"$1\" = \"build\" ]; then exit 0; fi\n{writeTrx}exit 0\n");
+    }
+
+    /// <summary>A unified diff replacing one unique line of an existing file (three lines of context on each side).</summary>
+    private static string ReplaceLine(string root, string relativePath, string oldLine, string newLine)
+    {
+        var lines = File.ReadAllLines(Path.Combine(root, relativePath));
+        var index = Array.IndexOf(lines, oldLine);
+        Assert.True(index >= 0, $"'{oldLine}' not found in {relativePath}");
+        var start = Math.Max(0, index - 3);
+        var end = Math.Min(lines.Length - 1, index + 3);
+        var builder = new System.Text.StringBuilder();
+        builder.Append($"--- a/{relativePath}\n+++ b/{relativePath}\n@@ -{start + 1},{end - start + 1} +{start + 1},{end - start + 1} @@\n");
+        for (var i = start; i <= end; i++)
+        {
+            if (i == index)
+            {
+                builder.Append('-').Append(oldLine).Append('\n').Append('+').Append(newLine).Append('\n');
+            }
+            else
+            {
+                builder.Append(' ').Append(lines[i]).Append('\n');
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static string FakeTestDiff() =>
+        "--- /dev/null\n+++ b/tests/EOS.Fake.Tests/FakeTests.cs\n@@ -0,0 +1,1 @@\n+// fake test\n";
 
     private static string FakeDiff() =>
         "--- a/src/EOS.Fake/Fake.cs\n+++ b/src/EOS.Fake/Fake.cs\n@@ -1,3 +1,4 @@\n+inserted\n line one\n line two\n line three\n";

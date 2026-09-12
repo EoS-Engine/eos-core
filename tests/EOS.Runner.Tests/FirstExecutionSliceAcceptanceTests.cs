@@ -320,6 +320,35 @@ public class FirstExecutionSliceAcceptanceTests : IDisposable
         Assert.Equal(before, await SnapshotRealTreeAsync(root));
     }
 
+    // Qodo H-2 regression: the changed project (EOS.Contracts) still compiles on its own; a
+    // consumer (EOS.Gates) no longer does. Real Gate 1 now builds the dependency closure, so the
+    // artifact is blocked and never reaches Review.
+    [Fact]
+    public async Task ManualRequest_OnTheRealRepository_BlocksTheTask_WhenTheChangeCompilesUpstream_ButBreaksADependentProject()
+    {
+        const string contractsPath = "src/EOS.Contracts/UniversalGateResult.cs";
+        var root = FindRepositoryRoot();
+        var before = await SnapshotRealTreeAsync(root);
+        var editBlocks = $"[EDIT]\nFILE: {contractsPath}\nSEARCH:\n    NotApplicable,\nREPLACE:\n    NotApplicableRenamed,\n[/EDIT]";
+        var stack = await BuildStackAsync(new FixedReasoningEngineClient(editBlocks), workspaceRoot: root);
+
+        await stack.LoopController.RunIterationAsync(
+            new TriggerContext("ManualRequest", $"Rename the NotApplicable gate status in {contractsPath}"), CancellationToken.None);
+
+        var taskId = Assert.Single(stack.StartedTaskIds);
+        var task = (await stack.DispatchedTaskStore.GetByIdAsync(taskId, CancellationToken.None))!;
+        Assert.Equal(TaskLifecycleState.Blocked, task.State);
+        Assert.StartsWith("Universal Gate failure: Universal Gate 1 (build/static analysis) failed", task.BlockedReason);
+        Assert.Contains("error CS0117", task.BlockedReason);
+        Assert.Empty(stack.CompletedTasks);
+        Assert.Single(stack.BlockedTasks);
+        var storedEvents = await stack.EventStore.GetRecentAsync(50, CancellationToken.None);
+        Assert.DoesNotContain(storedEvents, e => e.EventType == "TaskCompleted" && e.PayloadJson.Contains(taskId.ToString()));
+        Assert.Contains(storedEvents, e => e.EventType == "TaskBlocked" && e.PayloadJson.Contains(taskId.ToString()));
+
+        Assert.Equal(before, await SnapshotRealTreeAsync(root));
+    }
+
     // Regression for the Attempt-3 real-model artifact (sha256 db434678…): `git apply --check`
     // PASSES against the real repository, yet the test hunk drops a method signature, so the
     // patch does not compile (CS1519). Before ADR-009 this reached Review with TaskCompleted;
