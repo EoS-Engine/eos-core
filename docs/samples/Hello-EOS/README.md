@@ -37,7 +37,7 @@ Complete `docs/guides/Quick-Start.md` first. The specific preconditions for this
 | .NET SDK 10.0.1xx | `dotnet --list-sdks` |
 | SQL Server, Redis, ChromaDB running | `docker compose up -d && docker compose ps` — all three `healthy` |
 | Ollama running with the configured model | `ollama list` shows `qwen2.5-coder:7b` |
-| The three connection variables exported | `env \| grep '^EOS_'` shows three entries |
+| The three connection variables exported | presence check confirms all three `EOS_*` variables are set |
 
 ```bash
 cd <repository-root>
@@ -59,7 +59,7 @@ dotnet build
 dotnet run --project src/EOS.Runner -- ask "Reply with exactly the word OK and nothing else."
 ```
 
-A short, highly constrained question is used deliberately: it keeps the model's output to a single token so the interesting part — the pipeline around it — is easy to read.
+A short, highly constrained question is used deliberately: it encourages a short response so the interesting part — the pipeline around it — is easy to read. The runtime does not enforce an exact one-token output; the final text remains model-dependent.
 
 ### Expected output
 
@@ -331,7 +331,7 @@ dotnet run --project src/EOS.Runner -- ask "   "
 # Malformed request: no text was provided to 'ask'.
 ```
 
-**See the decision on the Dashboard** — `/api/recent-events` reads the same SQL Server the decision was written to:
+**See Dashboard event data** — `/api/recent-events` reads the EventStore table in SQL Server. It does not display the `ask` decision above; that decision is the `KnowledgeNode` row verified in §4.
 
 ```bash
 dotnet run --project src/EOS.Runner -- web

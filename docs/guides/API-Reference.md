@@ -419,7 +419,7 @@ public enum InferenceErrorType
 { ProviderUnavailable, CapabilityUnsupported, ContextTooLarge, MalformedResponse, Timeout }
 ```
 
-`InferAsync` reports failure through `InferenceResult.Success == false` plus `ErrorType`/`ErrorMessage` — it does not throw for provider-level failures.
+`InferAsync` reports ordinary provider-level failures through `InferenceResult.Success == false` plus `ErrorType`/`ErrorMessage`. `AIProviderManager` then records the failure and tries the next routed candidate. It does not catch exceptions that escape an adapter's `InferAsync`; those terminate the call. Caller cancellation also propagates.
 
 ### 6.2 `EOS.AIProvider` — the implementation
 

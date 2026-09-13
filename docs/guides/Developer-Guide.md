@@ -386,7 +386,7 @@ mediator.Publish(EventEnvelope<GreetingPayload>.Create(
 
 ### 11.3 Gate an action through the Protection Layer
 
-Requires: nothing (all engines are in-memory).
+Requires: the in-memory engines shown below plus an `IResourceManagementClient` supplied by the caller. In production that interface is backed by `EOS.Resources`; in a tiny example, provide a test double with the three interface members.
 
 ```csharp
 using EOS.Contracts;
@@ -400,7 +400,7 @@ var gate = new ProtectionGate(
     new ApprovalEngine(),
     new EmergencyShutdownState(),
     new ResourceCeilings(90, 8192, 476000, 100000, 32000, 4),
-    resourceManagementClient,          // any IResourceManagementClient
+    resourceManagementClient,          // caller-supplied IResourceManagementClient
     NullLogger<ProtectionGate>.Instance);
 
 var result = gate.Validate(new ActionRequest(Guid.NewGuid(), "Decision", "HumanOperator", RiskScore: 10));

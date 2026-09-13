@@ -18,7 +18,9 @@ cd <repository-root>
 
 dotnet --list-sdks                                   # expect a 10.0.1xx SDK
 docker compose ps                                    # expect 3 services, all healthy
-env | grep '^EOS_'                                   # expect 3 variables
+for name in EOS_SQLSERVER_CONNECTION_STRING EOS_REDIS_CONNECTION_STRING EOS_CHROMADB_ENDPOINT; do
+  test -n "${!name:-}" && echo "$name is set" || echo "$name is not set"
+done
 curl -s http://localhost:8000/api/v2/heartbeat       # ChromaDB
 docker exec eos-redis redis-cli ping                 # expect PONG
 ollama list                                          # expect qwen2.5-coder:7b
@@ -207,7 +209,9 @@ Required environment variable 'EOS_SQLSERVER_CONNECTION_STRING' is not set.
 
 **Verify.**
 ```bash
-env | grep '^EOS_'
+for name in EOS_SQLSERVER_CONNECTION_STRING EOS_REDIS_CONNECTION_STRING EOS_CHROMADB_ENDPOINT; do
+  test -n "${!name:-}" && echo "$name is set" || echo "$name is not set"
+done
 ```
 
 **Resolution.** Export the three variables:
@@ -231,7 +235,11 @@ followed by a bootstrap step 5 failure.
 
 **Verify.**
 ```bash
-echo "$EOS_SQLSERVER_CONNECTION_STRING"    # truncated at "Server=localhost,1433;Database=master;User"
+case "${EOS_SQLSERVER_CONNECTION_STRING:-}" in
+  *"User Id="*) echo "EOS_SQLSERVER_CONNECTION_STRING is set and contains User Id" ;;
+  "") echo "EOS_SQLSERVER_CONNECTION_STRING is not set" ;;
+  *) echo "EOS_SQLSERVER_CONNECTION_STRING is set but may be truncated" ;;
+esac
 ```
 
 **Resolution.** Export explicitly (§5.1), or use a loader that preserves the full value:

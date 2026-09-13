@@ -84,7 +84,7 @@ dotnet test tests/EOS.Gates.Tests/EOS.Gates.Tests.csproj \
 dotnet test tests/EOS.Runner.Tests/EOS.Runner.Tests.csproj \
   --filter "FullyQualifiedName~AskCommandIntegrationTests.ExecuteAsync_ReturnsNonZero_WhenTextIsEmpty"
 
-# Everything except the projects that need Ollama (fast feedback loop)
+# Selected projects that avoid Ollama (fast feedback loop)
 dotnet test tests/EOS.Gates.Tests/EOS.Gates.Tests.csproj
 dotnet test tests/EOS.Resources.Tests/EOS.Resources.Tests.csproj
 dotnet test tests/EOS.ArchitectureTests/EOS.ArchitectureTests.csproj
@@ -245,7 +245,9 @@ Work through these in order:
 
 ```bash
 docker compose ps                                    # all three healthy?
-echo "$EOS_SQLSERVER_CONNECTION_STRING"              # variables actually exported?
+for name in EOS_SQLSERVER_CONNECTION_STRING EOS_REDIS_CONNECTION_STRING EOS_CHROMADB_ENDPOINT; do
+  test -n "${!name:-}" && echo "$name is set" || echo "$name is not set"
+done
 curl -s http://localhost:8000/api/v2/heartbeat       # ChromaDB
 docker exec eos-redis redis-cli ping                 # Redis
 ollama list                                          # model present
