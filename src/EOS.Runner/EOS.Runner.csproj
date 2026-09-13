@@ -13,6 +13,7 @@
     <ProjectReference Include="..\EOS.Orchestrator\EOS.Orchestrator.csproj" />
     <ProjectReference Include="..\EOS.Planner\EOS.Planner.csproj" />
     <ProjectReference Include="..\EOS.Resources\EOS.Resources.csproj" />
+    <ProjectReference Include="..\EOS.SeniorEngineer\EOS.SeniorEngineer.csproj" />
     <ProjectReference Include="..\EOS.Web\EOS.Web.csproj" />
   </ItemGroup>
 

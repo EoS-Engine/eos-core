@@ -68,7 +68,9 @@ public class RetryRollbackReplanAcceptanceTests
             dispatchedTaskStore, new PlanStorePlanQueryClient(planStore), goalPlanQueryClient,
             new AlwaysSafeResourceManagementClient(), concurrencyCeiling: 1_000_000, dailyCapacity: 1_000_000);
         var executionCoordinator = new ExecutionCoordinator(
-            scheduler, dispatchedTaskStore, realProtectionGate, new RecordingTaskStartedEventPublisher());
+            scheduler, dispatchedTaskStore, realProtectionGate, new RecordingTaskStartedEventPublisher(),
+            new NeverCalledTaskExecutionClient(), new NoOpTaskCompletedEventPublisher(), new NoOpTaskBlockedEventPublisher(),
+            new NeverCalledUniversalGateClient());
         var taskRetriedPublisher = new RecordingTaskRetriedEventPublisher();
         var retryManager = new RetryManager(
             dispatchedTaskStore, realProtectionGate, taskRetriedPublisher,
@@ -234,6 +236,36 @@ public class RetryRollbackReplanAcceptanceTests
     {
         public Task<Plan> RequestReplanAfterFailureAsync(Guid goalId, CancellationToken cancellationToken = default) =>
             planningEngine.ReplanAfterFailureAsync(goalId, cancellationToken);
+    }
+
+    // Post-Roadmap WP-A: ExecutionCoordinator gained three required execution collaborators.
+    // This test exercises dispatch only, never ExecuteAndCompleteAsync, so the executor is a
+    // never-called double and the two publishers are no-ops (same no-op pattern as the
+    // Recording*EventPublisher doubles in this file).
+    private sealed class NeverCalledTaskExecutionClient : ITaskExecutionClient
+    {
+        public Task<TaskExecutionResult> ExecuteAsync(DispatchedTask task, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("ExecuteAsync must not be called by this test.");
+    }
+
+    private sealed class NoOpTaskCompletedEventPublisher : ITaskCompletedEventPublisher
+    {
+        public void PublishTaskCompleted(Guid taskId, string[] evidenceRefs)
+        {
+        }
+    }
+
+    private sealed class NeverCalledUniversalGateClient : IUniversalGateClient
+    {
+        public Task<UniversalGateDecision> EvaluateAsync(DispatchedTask task, IReadOnlyList<string> evidenceRefs, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("EvaluateAsync must not be called by this test.");
+    }
+
+    private sealed class NoOpTaskBlockedEventPublisher : ITaskBlockedEventPublisher
+    {
+        public void PublishTaskBlocked(Guid taskId, string reason)
+        {
+        }
     }
 
     private sealed class RecordingTaskStartedEventPublisher : ITaskStartedEventPublisher

@@ -424,9 +424,26 @@ public sealed class LoopController(
 
         // Step 10: Execute — Execution Coordinator's own chokepoint (FR-PE1), independently
         // re-validating Protection internally (FR-PE2) — the Protection Invariant's second,
-        // pre-existing layer, unmodified by this WP.
+        // pre-existing layer. Post-Roadmap WP-A: once a Task is dispatched, the same chokepoint
+        // now hands it to the Autonomous Role and records the outcome (Constitution Part 6 §6.2
+        // "Role executes"; Running → Review with TaskCompleted, or Running → Blocked with
+        // TaskBlocked). A Protection denial of the completion is a legitimate completed iteration
+        // ("Denied", the Protection Invariant above); a role failure is a completed iteration with
+        // outcome "Failed" — the Task itself is Blocked, never left Running.
         stepsTraversed.Add(10);
         var dispatch = await executionCoordinator.DispatchNextAsync(cancellationToken);
+        string? executionOutcome = null;
+        if (dispatch.Outcome == DispatchOutcome.Dispatched)
+        {
+            var execution = await executionCoordinator.ExecuteAndCompleteAsync(dispatch.Task!, cancellationToken);
+            executionOutcome = execution.Outcome switch
+            {
+                ExecutionOutcome.Completed => null,
+                ExecutionOutcome.ProtectionDenied => "Denied",
+                ExecutionOutcome.ExecutionFailed => "Failed",
+                _ => throw new InvalidOperationException($"Unrecognized execution outcome {execution.Outcome}."),
+            };
+        }
 
         // Step 11: Observe Results.
         stepsTraversed.Add(11);
@@ -439,7 +456,8 @@ public sealed class LoopController(
         // only; no citable capability exists in this repository.
         stepsTraversed.Add(12);
 
-        return RunLearningPhaseOnly(stepsTraversed, startAt: 13);
+        var learningOutcome = RunLearningPhaseOnly(stepsTraversed, startAt: 13);
+        return executionOutcome ?? learningOutcome;
     }
 
     /// <summary>Step 1 (Observe) only — Performance Degradation's realizable citation (Resource Management state).</summary>
