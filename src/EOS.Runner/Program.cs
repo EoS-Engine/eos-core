@@ -34,7 +34,7 @@ if (results.Count == 0 || !results.All(r => r.Status))
     return 1;
 }
 
-if (args is not ["ask", _] and not ["compress"] and not ["web"] and not ["run", _])
+if (args is not ["ask", _] and not ["compress"] and not ["web"] && RunCommandArguments.Parse(args).Kind == RunCommandKind.NotRun)
 {
     return 0;
 }
@@ -595,9 +595,45 @@ try
     // enforcement itself remains deferred (WP-029 Decision 4). The report below is assembled
     // solely from the events the runtime publishes — nothing here bypasses or re-implements
     // any subsystem.
-    if (args is ["run", _])
+    var runCommand = RunCommandArguments.Parse(args);
+    if (runCommand.Kind is RunCommandKind.LegacySelfRepository or RunCommandKind.ExternalTarget or RunCommandKind.Malformed)
     {
         var runLogger = host.Services.GetRequiredService<ILogger<LoopController>>();
+        if (runCommand.Kind == RunCommandKind.Malformed)
+        {
+            Console.Error.WriteLine(runCommand.Error);
+            return 1;
+        }
+
+        if (runCommand.Kind == RunCommandKind.ExternalTarget)
+        {
+            if (!runCommand.TrustBuildTest)
+            {
+                Console.Error.WriteLine("External target execution requires --trust-build-test.");
+                return 1;
+            }
+
+            TargetWorkspacePreflightResult preflight;
+            try
+            {
+                preflight = await new TargetWorkspacePreflight().ValidateAsync(runCommand.TargetPath, CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is TargetWorkspacePreflightException or OperationCanceledException)
+            {
+                runLogger.LogError(ex, "External target preflight failed.");
+                Console.Error.WriteLine($"External target preflight failed: {ex.Message}");
+                return 1;
+            }
+
+            Console.WriteLine($"External target: {preflight.CanonicalRoot}");
+            Console.WriteLine($"External target HEAD: {preflight.ResolvedHead}");
+            Console.WriteLine(
+                "Trust warning: repository-controlled builds/tests may execute code with host filesystem, network, and process capabilities; "
+                + "the future isolated validation copy protects the real target from candidate mutation, but it is not an OS sandbox.");
+            Console.WriteLine("ADR-010 S1 external target preflight passed. Later slices are required before external planning/execution.");
+            return 1;
+        }
+
         var completedIterations = new List<(Guid IterationId, string Outcome, int[] Steps)>();
         eventMediator.Subscribe<GoalCreatedPayload>(envelope =>
             Console.WriteLine($"Goal created: {envelope.Payload.GoalId} — \"{envelope.Payload.Statement}\""));
@@ -615,7 +651,7 @@ try
 
         try
         {
-            await loopController.RunIterationAsync(new TriggerContext("ManualRequest", args[1]), CancellationToken.None);
+            await loopController.RunIterationAsync(new TriggerContext("ManualRequest", runCommand.TaskText), CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -1756,6 +1792,61 @@ internal sealed class NoSelfReferentialTasksProvenanceQueryClient : ITaskProvena
 {
     public Task<IReadOnlyList<Guid>> GetSelfReferentialTaskIdsAsync(Guid knowledgeGraphRef, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<Guid>>([]);
+}
+
+internal enum RunCommandKind
+{
+    NotRun,
+    LegacySelfRepository,
+    ExternalTarget,
+    Malformed,
+}
+
+internal sealed record RunCommandArguments(
+    RunCommandKind Kind,
+    string? TaskText,
+    string? TargetPath,
+    bool TrustBuildTest,
+    string? Error)
+{
+    public static RunCommandArguments Parse(string[] args)
+    {
+        if (args.Length == 0 || args[0] != "run")
+        {
+            return new RunCommandArguments(RunCommandKind.NotRun, null, null, false, null);
+        }
+
+        if (args.Length == 2 && !IsRunOption(args[1]))
+        {
+            return new RunCommandArguments(RunCommandKind.LegacySelfRepository, args[1], null, false, null);
+        }
+
+        if (args.Length == 5 && args[1] == "--target" && args[3] == "--trust-build-test")
+        {
+            return string.IsNullOrWhiteSpace(args[2]) || string.IsNullOrWhiteSpace(args[4])
+                ? Malformed("External run requires a non-empty target path and task text.")
+                : new RunCommandArguments(RunCommandKind.ExternalTarget, args[4], args[2], true, null);
+        }
+
+        if (args.Length == 4 && args[1] == "--target")
+        {
+            return args[3] == "--trust-build-test"
+                ? Malformed("External run requires an engineering task after --trust-build-test.")
+                : Malformed("External target execution requires --trust-build-test.");
+        }
+
+        if (args.Length > 1 && args.Skip(1).Any(argument => argument == "--target"))
+        {
+            return Malformed("Use exactly: run --target <path> --trust-build-test \"<engineering task>\".");
+        }
+
+        return Malformed("Use exactly one of: run \"<engineering task>\" or run --target <path> --trust-build-test \"<engineering task>\".");
+    }
+
+    private static bool IsRunOption(string value) => value.StartsWith("--", StringComparison.Ordinal);
+
+    private static RunCommandArguments Malformed(string error) =>
+        new(RunCommandKind.Malformed, null, null, false, error);
 }
 
 /// <summary>

@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using EOS.Infrastructure;
 
 namespace EOS.Infrastructure.Tests;
@@ -246,5 +247,179 @@ public class WorkspaceReaderTests : IDisposable
         {
             Environment.SetEnvironmentVariable("PATH", original);
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // ADR-010 S1: TargetWorkspacePreflight — explicit external target Git/root/clean validation.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_AcceptsCleanGitRepository_AndLeavesItUntouched()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        var sourceBefore = await File.ReadAllTextAsync(Path.Combine(repo, "src", "App.cs"));
+        var indexBefore = HashFile(Path.Combine(repo, ".git", "index"));
+        var headBefore = await GitAsync(repo, "rev-parse", "HEAD");
+
+        var result = await new TargetWorkspacePreflight().ValidateAsync(repo);
+
+        Assert.Equal(new DirectoryInfo(repo).FullName, result.CanonicalRoot);
+        Assert.Equal(headBefore.Trim(), result.ResolvedHead);
+        Assert.True(result.CleanStateValidated);
+        Assert.Equal(sourceBefore, await File.ReadAllTextAsync(Path.Combine(repo, "src", "App.cs")));
+        Assert.Equal(indexBefore, HashFile(Path.Combine(repo, ".git", "index")));
+        Assert.Equal(headBefore, await GitAsync(repo, "rev-parse", "HEAD"));
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_CanonicalizesNestedSelection_ToGitRoot()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        var nested = Path.Combine(repo, "src");
+
+        var result = await new TargetWorkspacePreflight().ValidateAsync(nested);
+
+        Assert.Equal(new DirectoryInfo(repo).FullName, result.CanonicalRoot);
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_AllowsDetachedHead_WhenHeadResolves()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        var head = (await GitAsync(repo, "rev-parse", "HEAD")).Trim();
+        await GitAsync(repo, "checkout", "--detach", head);
+
+        var result = await new TargetWorkspacePreflight().ValidateAsync(repo);
+
+        Assert.Equal(head, result.ResolvedHead);
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_RejectsUnbornHead()
+    {
+        var repo = CreateTempDirectory("eos-unborn-");
+        await GitAsync(repo, "init");
+
+        await Assert.ThrowsAsync<TargetWorkspacePreflightException>(() => new TargetWorkspacePreflight().ValidateAsync(repo));
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_RejectsMissingAndNonDirectoryTargets()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        var file = Path.Combine(repo, "src", "App.cs");
+
+        await Assert.ThrowsAsync<TargetWorkspacePreflightException>(() => new TargetWorkspacePreflight().ValidateAsync(Path.Combine(repo, "missing")));
+        await Assert.ThrowsAsync<TargetWorkspacePreflightException>(() => new TargetWorkspacePreflight().ValidateAsync(file));
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_RejectsNonGitDirectory()
+    {
+        var directory = CreateTempDirectory("eos-nongit-");
+
+        await Assert.ThrowsAsync<TargetWorkspacePreflightException>(() => new TargetWorkspacePreflight().ValidateAsync(directory));
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_RejectsStagedChanges()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        await File.AppendAllTextAsync(Path.Combine(repo, "src", "App.cs"), "// staged\n");
+        await GitAsync(repo, "add", "src/App.cs");
+
+        await Assert.ThrowsAsync<TargetWorkspacePreflightException>(() => new TargetWorkspacePreflight().ValidateAsync(repo));
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_RejectsModifiedTrackedFiles()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        await File.AppendAllTextAsync(Path.Combine(repo, "src", "App.cs"), "// modified\n");
+
+        await Assert.ThrowsAsync<TargetWorkspacePreflightException>(() => new TargetWorkspacePreflight().ValidateAsync(repo));
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_RejectsDeletedTrackedFiles()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        File.Delete(Path.Combine(repo, "src", "App.cs"));
+
+        await Assert.ThrowsAsync<TargetWorkspacePreflightException>(() => new TargetWorkspacePreflight().ValidateAsync(repo));
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_RejectsUntrackedNonIgnoredFiles()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        await File.WriteAllTextAsync(Path.Combine(repo, "new.txt"), "untracked\n");
+
+        await Assert.ThrowsAsync<TargetWorkspacePreflightException>(() => new TargetWorkspacePreflight().ValidateAsync(repo));
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_AcceptsIgnoredFilesOnly()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        await File.WriteAllTextAsync(Path.Combine(repo, ".gitignore"), "ignored.txt\n");
+        await GitAsync(repo, "add", ".gitignore");
+        await GitAsync(repo, "commit", "-m", "ignore file");
+        await File.WriteAllTextAsync(Path.Combine(repo, "ignored.txt"), "ignored\n");
+
+        var result = await new TargetWorkspacePreflight().ValidateAsync(repo);
+
+        Assert.True(result.CleanStateValidated);
+    }
+
+    private static async Task<string> CreateCommittedRepositoryAsync()
+    {
+        var repo = CreateTempDirectory("eos-target-");
+        Directory.CreateDirectory(Path.Combine(repo, "src"));
+        await File.WriteAllTextAsync(Path.Combine(repo, "src", "App.cs"), "namespace Probe;\n");
+        await GitAsync(repo, "init");
+        await GitAsync(repo, "config", "user.email", "test@example.invalid");
+        await GitAsync(repo, "config", "user.name", "EOS Test");
+        await GitAsync(repo, "add", "src/App.cs");
+        await GitAsync(repo, "commit", "-m", "initial");
+        return repo;
+    }
+
+    private static string CreateTempDirectory(string prefix)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
+
+    private static string HashFile(string path) =>
+        Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
+
+    private static async Task<string> GitAsync(string workingDirectory, params string[] arguments)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo("git")
+        {
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = System.Diagnostics.Process.Start(startInfo)
+            ?? throw new InvalidOperationException("git failed to start");
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"git {string.Join(' ', arguments)} failed: {stderr}");
+        }
+
+        return stdout;
     }
 }
