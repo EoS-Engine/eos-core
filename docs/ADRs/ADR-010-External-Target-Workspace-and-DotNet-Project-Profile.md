@@ -54,13 +54,15 @@ Before planning or execution, the selected path must:
 
 All target operations resolve relative to that canonical root. The raw absolute path need not be persisted. Durable audit correlation records only the minimum non-secret identity needed to associate evidence with the target, including a non-secret workspace identifier or fingerprint, the selected profile, and the base Git commit when available. Remote identity, if used, must be credential-safe. This ADR does not prescribe a storage representation.
 
-For the initial external-workspace capability, the Target Workspace must also have a resolved Git `HEAD` and a clean, stable repository content state before engineering execution begins. Staged changes, modified tracked files, and untracked non-ignored files make the input state ambiguous and fail preflight. A detached `HEAD` is permitted when it resolves to a commit; an unborn `HEAD` is unsupported. Profile-approved ignored/generated restore assets may exist only where the profile explicitly permits them for isolated validation: they are not candidate source state and do not redefine the source-state identity.
+For the initial external-workspace capability, the Target Workspace must also have a resolved Git `HEAD` and a clean, stable repository content state before engineering execution begins. Staged changes, modified tracked files, and untracked non-ignored files make the input state ambiguous and fail preflight. A detached `HEAD` is permitted when it resolves to a commit; an unborn `HEAD` is unsupported. Profile-approved ignored/generated restore assets may exist only where the profile explicitly permits them for isolated validation: they are not candidate source state, are not candidate-editable, and do not redefine the source-state identity. Unapproved ignored/generated files remain excluded and irrelevant to validation.
 
 EOS establishes one stable input-state identity before using source content. For this initial clean-workspace rule, the resolved `HEAD` commit plus successful clean-state and stability validation is that identity. A workspace-location identifier or fingerprint identifies the selected location; it is not proof of repository content. EOS must be able to detect a repository source-state change between preflight, source reads, patch applicability, and establishment of the isolated validation copy. Any such change fails closed without merge or reconciliation. Once established, the isolated copy is the immutable input for Gates 1–2. The mandatory invariant is:
 
 `SeniorEngineer input state = patch applicability input state = isolated Gate input state`
 
-This decision requires the invariant, not a general snapshot system or a particular implementation mechanism.
+Gate validation may additionally depend on a profile-approved ignored/generated asset only when its exact validation input is bound before Gate execution. The implementation must either deterministically recreate the asset inside the isolated validation environment from already validated inputs, or validate/fingerprint and copy its exact required content into the isolated validation input and include that validation in the invocation's gate-input identity. If neither can be established safely, preflight fails closed. This validation-input identity is distinct from, and does not weaken or replace, the source-content identity and invariant above.
+
+This decision requires the invariant and bounded validation-input identity, not a general snapshot system or a particular implementation mechanism.
 
 ### 3.4 Protection Boundary
 
@@ -99,7 +101,7 @@ The profile supports SDK-style `.csproj` projects and either a `.sln`/`.slnx` so
 
 Gate 1 and Gate 2 may execute only after the HumanOperator explicitly authorizes the selected workspace as trusted for local build/test execution. Selecting a filesystem path alone is not consent to execute repository-controlled code. Before gate execution, EOS must make visible that builds and tests may execute project-controlled code with host filesystem and network capabilities, that the isolated copy protects the real workspace from candidate mutation, and that this capability provides no operating-system sandbox. Exact confirmation or command-line interaction is an implementation decision.
 
-The profile defines deterministic changed-file/project ownership, `dotnet build` as Gate 1, deterministically relevant `dotnet test` projects as Gate 2, and fail-closed behavior for unsupported or ambiguous repositories. Gate 2 is `NotApplicable` only when deterministic profile analysis proves that no test project is relevant to the affected production paths.
+The profile defines deterministic changed-file/project ownership, `dotnet build` as Gate 1, deterministically relevant `dotnet test` projects as Gate 2, and fail-closed behavior for unsupported or ambiguous repositories. Relevant-test analysis uses the complete affected candidate path set: affected production paths may map to relevant test projects, while affected test paths directly identify or own their relevant test projects. A test-only candidate must run its deterministically owned or relevant test project. Gate 2 is `NotApplicable` only when deterministic profile analysis proves that no relevant test project exists for any affected production or test path; it does not require running the entire solution test suite.
 
 The profile must not depend on `EOS.slnx`, EOS naming, `src/P/P.csproj`, `tests/P.Tests/P.Tests.csproj`, or other EOS-specific directory names. Other languages and toolchains remain unsupported. Arbitrary shell-command profiles and a generic build-command framework are not authorized.
 
@@ -130,11 +132,12 @@ The human review path must correlate:
 - the exact candidate artifact and affected target-relative paths;
 - the minimum non-secret workspace identity;
 - the resolved base Git `HEAD` commit and successful clean/stability validation that identify the source content state;
+- any separately stabilized profile validation-input identity used by Gates 1–2;
 - the selected project profile;
 - the Gate 1 result; and
 - the Gate 2 result.
 
-The selected canonical root is visible to the HumanOperator during the invocation, and the exact candidate diff and gate results must be inspectable. The implementation may use existing artifact, task, and event audit paths; this ADR does not prescribe storage mechanics.
+The selected canonical absolute root may be displayed to the HumanOperator during the local invocation solely to confirm target identity. This is the only absolute-path visibility exception: workspace operation paths, manifest paths, role inputs, candidate paths, artifact paths, and other paths crossing subsystem boundaries remain Target-Workspace-relative. The display does not require persistence of the raw absolute root. The exact candidate diff and gate results must be inspectable. The implementation may use existing artifact, task, and event audit paths; this ADR does not prescribe storage mechanics.
 
 ### 3.10 Real Workspace Immutability
 
@@ -205,7 +208,7 @@ This ADR records requirements, not claims of completed implementation. A future 
 1. A HumanOperator explicitly selects one independent local Git Target Workspace.
 2. EOS displays the canonical selected target and records sufficient non-secret audit identity.
 3. The target has a resolved `HEAD`, is clean of staged, modified tracked, and untracked non-ignored files, and remains stable until the isolated validation copy is established; detached `HEAD` is permitted when resolvable and unborn `HEAD` is rejected.
-4. SeniorEngineer reads, patch applicability, and the isolated Gate copy use the same validated source content state, which is correlated with the candidate evidence.
+4. SeniorEngineer reads, patch applicability, and the isolated Gate copy use the same validated source content state, which is correlated with the candidate evidence; any profile-approved ignored/generated validation asset is deterministically recreated from validated inputs or exactly validated/fingerprinted and copied into the isolated input, otherwise preflight fails closed.
 5. EOS never silently substitutes eos-core after an external workspace was requested.
 6. Discovery is bounded, root-contained, profile-aware, and Protection-governed.
 7. Candidate and read paths cannot escape the target through traversal or symbolic links.
@@ -217,5 +220,5 @@ This ADR records requirements, not claims of completed implementation. A future 
 13. Gates 1–2 execute only in an isolated copy of that target and only after explicit HumanOperator authorization to execute trusted project-controlled build/test code.
 14. One non-EOS-named SDK-style .NET Git workspace completes the workflow.
 15. Unsupported or ambiguous project types fail closed during preflight.
-16. The human can inspect the exact candidate diff, affected paths, source-state identity, and Gate 1–2 results.
+16. The human can inspect the exact candidate diff, affected paths, source-state identity, any separate validation-input identity, and Gate 1–2 results; the canonical absolute root may be displayed only for operator target confirmation while all operation and candidate paths remain Target-Workspace-relative.
 17. No real-workspace mutation, commit, push, PR operation, Gate 3–5 implementation, plugin framework, or expanded autonomy is introduced.
