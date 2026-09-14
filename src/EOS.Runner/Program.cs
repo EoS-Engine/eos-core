@@ -601,7 +601,8 @@ try
         var runLogger = host.Services.GetRequiredService<ILogger<LoopController>>();
         if (runCommand.Kind == RunCommandKind.Malformed)
         {
-            Console.Error.WriteLine(runCommand.Error);
+            var decision = RunCommandArguments.DecideContinuation(runCommand);
+            Console.Error.WriteLine(decision.Error);
             return 1;
         }
 
@@ -620,8 +621,16 @@ try
             }
             catch (Exception ex) when (ex is TargetWorkspacePreflightException or OperationCanceledException)
             {
+                _ = RunCommandArguments.DecideContinuation(runCommand, preflightFailure: ex);
                 runLogger.LogError(ex, "External target preflight failed.");
                 Console.Error.WriteLine($"External target preflight failed: {ex.Message}");
+                return 1;
+            }
+
+            var decision = RunCommandArguments.DecideContinuation(runCommand, preflightSucceeded: true);
+            if (decision.Route != RunCommandExecutionRoute.StopAfterS1Preflight)
+            {
+                Console.Error.WriteLine(decision.Error);
                 return 1;
             }
 
@@ -631,6 +640,13 @@ try
                 "Trust warning: repository-controlled builds/tests may execute code with host filesystem, network, and process capabilities; "
                 + "the future isolated validation copy protects the real target from candidate mutation, but it is not an OS sandbox.");
             Console.WriteLine("ADR-010 S1 external target preflight passed. Later slices are required before external planning/execution.");
+            return 1;
+        }
+
+        var legacyDecision = RunCommandArguments.DecideContinuation(runCommand);
+        if (legacyDecision.Route != RunCommandExecutionRoute.ContinueLegacy)
+        {
+            Console.Error.WriteLine(legacyDecision.Error);
             return 1;
         }
 
@@ -1802,6 +1818,16 @@ internal enum RunCommandKind
     Malformed,
 }
 
+internal enum RunCommandExecutionRoute
+{
+    Ignore,
+    Fail,
+    StopAfterS1Preflight,
+    ContinueLegacy,
+}
+
+internal sealed record RunCommandDecision(RunCommandExecutionRoute Route, string? Error);
+
 internal sealed record RunCommandArguments(
     RunCommandKind Kind,
     string? TaskText,
@@ -1847,6 +1873,26 @@ internal sealed record RunCommandArguments(
 
     private static RunCommandArguments Malformed(string error) =>
         new(RunCommandKind.Malformed, null, null, false, error);
+
+    public static RunCommandDecision DecideContinuation(
+        RunCommandArguments command,
+        bool preflightSucceeded = false,
+        Exception? preflightFailure = null) =>
+        command.Kind switch
+        {
+            RunCommandKind.NotRun => new RunCommandDecision(RunCommandExecutionRoute.Ignore, null),
+            RunCommandKind.Malformed => new RunCommandDecision(RunCommandExecutionRoute.Fail, command.Error),
+            RunCommandKind.LegacySelfRepository => new RunCommandDecision(RunCommandExecutionRoute.ContinueLegacy, null),
+            RunCommandKind.ExternalTarget when !command.TrustBuildTest =>
+                new RunCommandDecision(RunCommandExecutionRoute.Fail, "External target execution requires --trust-build-test."),
+            RunCommandKind.ExternalTarget when preflightFailure is not null =>
+                new RunCommandDecision(RunCommandExecutionRoute.Fail, preflightFailure.Message),
+            RunCommandKind.ExternalTarget when preflightSucceeded =>
+                new RunCommandDecision(RunCommandExecutionRoute.StopAfterS1Preflight, null),
+            RunCommandKind.ExternalTarget =>
+                new RunCommandDecision(RunCommandExecutionRoute.Fail, "External target preflight has not succeeded."),
+            _ => new RunCommandDecision(RunCommandExecutionRoute.Fail, "Unsupported run command."),
+        };
 }
 
 /// <summary>

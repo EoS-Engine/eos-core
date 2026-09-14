@@ -272,6 +272,24 @@ public class WorkspaceReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task TargetWorkspacePreflight_DoesNotRefreshOrRewriteIndex_WhenTrackedStatInfoIsStale()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        var trackedFile = Path.Combine(repo, "src", "App.cs");
+        var sourceBefore = await File.ReadAllTextAsync(trackedFile);
+        var headBefore = await GitAsync(repo, "rev-parse", "HEAD");
+        File.SetLastWriteTimeUtc(trackedFile, DateTime.UtcNow.AddMinutes(1));
+        var indexBefore = HashFile(Path.Combine(repo, ".git", "index"));
+
+        var result = await new TargetWorkspacePreflight().ValidateAsync(repo);
+
+        Assert.True(result.CleanStateValidated);
+        Assert.Equal(sourceBefore, await File.ReadAllTextAsync(trackedFile));
+        Assert.Equal(indexBefore, HashFile(Path.Combine(repo, ".git", "index")));
+        Assert.Equal(headBefore, await GitAsync(repo, "rev-parse", "HEAD"));
+    }
+
+    [Fact]
     public async Task TargetWorkspacePreflight_CanonicalizesNestedSelection_ToGitRoot()
     {
         var repo = await CreateCommittedRepositoryAsync();
@@ -280,6 +298,57 @@ public class WorkspaceReaderTests : IDisposable
         var result = await new TargetWorkspacePreflight().ValidateAsync(nested);
 
         Assert.Equal(new DirectoryInfo(repo).FullName, result.CanonicalRoot);
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_AcceptsRootSymlink_AndReturnsPhysicalGitRoot()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        var link = Path.Combine(Path.GetTempPath(), $"eos-link-{Guid.NewGuid():N}");
+        Directory.CreateSymbolicLink(link, repo);
+        try
+        {
+            var result = await new TargetWorkspacePreflight().ValidateAsync(link);
+
+            Assert.Equal(new DirectoryInfo(repo).FullName, result.CanonicalRoot);
+        }
+        finally
+        {
+            File.Delete(link);
+        }
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_AcceptsNestedSymlink_AndReturnsPhysicalGitRoot()
+    {
+        var repo = await CreateCommittedRepositoryAsync();
+        var link = Path.Combine(Path.GetTempPath(), $"eos-nested-link-{Guid.NewGuid():N}");
+        Directory.CreateSymbolicLink(link, Path.Combine(repo, "src"));
+        try
+        {
+            var result = await new TargetWorkspacePreflight().ValidateAsync(link);
+
+            Assert.Equal(new DirectoryInfo(repo).FullName, result.CanonicalRoot);
+        }
+        finally
+        {
+            File.Delete(link);
+        }
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_RejectsBrokenSymlinkSelection()
+    {
+        var link = Path.Combine(Path.GetTempPath(), $"eos-broken-link-{Guid.NewGuid():N}");
+        Directory.CreateSymbolicLink(link, Path.Combine(Path.GetTempPath(), $"eos-missing-{Guid.NewGuid():N}"));
+        try
+        {
+            await Assert.ThrowsAsync<TargetWorkspacePreflightException>(() => new TargetWorkspacePreflight().ValidateAsync(link));
+        }
+        finally
+        {
+            File.Delete(link);
+        }
     }
 
     [Fact]
@@ -372,6 +441,37 @@ public class WorkspaceReaderTests : IDisposable
         Assert.True(result.CleanStateValidated);
     }
 
+    [Fact]
+    public async Task TargetWorkspacePreflight_IgnoresAmbientGitDirSelector()
+    {
+        var selectedRepo = await CreateCommittedRepositoryAsync();
+        var otherRepo = await CreateCommittedRepositoryAsync();
+        await File.AppendAllTextAsync(Path.Combine(otherRepo, "src", "App.cs"), "// ambient dirty\n");
+
+        var result = await WithEnvironmentVariableAsync(
+            "GIT_DIR",
+            Path.Combine(otherRepo, ".git"),
+            () => new TargetWorkspacePreflight().ValidateAsync(selectedRepo));
+
+        Assert.Equal(new DirectoryInfo(selectedRepo).FullName, result.CanonicalRoot);
+        Assert.Equal((await GitAsync(selectedRepo, "rev-parse", "HEAD")).Trim(), result.ResolvedHead);
+    }
+
+    [Fact]
+    public async Task TargetWorkspacePreflight_IgnoresAmbientGitIndexFileSelector()
+    {
+        var selectedRepo = await CreateCommittedRepositoryAsync();
+        var alternateIndex = Path.Combine(CreateTempDirectory("eos-index-"), "index");
+
+        var result = await WithEnvironmentVariableAsync(
+            "GIT_INDEX_FILE",
+            alternateIndex,
+            () => new TargetWorkspacePreflight().ValidateAsync(selectedRepo));
+
+        Assert.Equal(new DirectoryInfo(selectedRepo).FullName, result.CanonicalRoot);
+        Assert.Equal((await GitAsync(selectedRepo, "rev-parse", "HEAD")).Trim(), result.ResolvedHead);
+    }
+
     private static async Task<string> CreateCommittedRepositoryAsync()
     {
         var repo = CreateTempDirectory("eos-target-");
@@ -394,6 +494,20 @@ public class WorkspaceReaderTests : IDisposable
 
     private static string HashFile(string path) =>
         Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
+
+    private static async Task<T> WithEnvironmentVariableAsync<T>(string name, string value, Func<Task<T>> action)
+    {
+        var original = Environment.GetEnvironmentVariable(name);
+        Environment.SetEnvironmentVariable(name, value);
+        try
+        {
+            return await action();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, original);
+        }
+    }
 
     private static async Task<string> GitAsync(string workingDirectory, params string[] arguments)
     {

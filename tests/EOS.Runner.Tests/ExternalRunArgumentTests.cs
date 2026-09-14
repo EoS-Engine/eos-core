@@ -48,4 +48,61 @@ public class ExternalRunArgumentTests
         Assert.Equal(RunCommandKind.Malformed, parsed.Kind);
         Assert.NotNull(parsed.Error);
     }
+
+    [Fact]
+    public void DecideContinuation_FailsMalformedExternalCommand()
+    {
+        var parsed = RunCommandArguments.Parse(["run", "--target", "/tmp/project"]);
+
+        var decision = RunCommandArguments.DecideContinuation(parsed);
+
+        Assert.Equal(RunCommandExecutionRoute.Fail, decision.Route);
+    }
+
+    [Fact]
+    public void DecideContinuation_FailsExternalCommandWithoutTrust()
+    {
+        var parsed = new RunCommandArguments(
+            RunCommandKind.ExternalTarget,
+            TaskText: "Change src/App.cs",
+            TargetPath: "/tmp/project",
+            TrustBuildTest: false,
+            Error: null);
+
+        var decision = RunCommandArguments.DecideContinuation(parsed);
+
+        Assert.Equal(RunCommandExecutionRoute.Fail, decision.Route);
+        Assert.Contains("--trust-build-test", decision.Error);
+    }
+
+    [Fact]
+    public void DecideContinuation_FailsExternalCommandWhenPreflightFails()
+    {
+        var parsed = RunCommandArguments.Parse(["run", "--target", "/tmp/project", "--trust-build-test", "Change src/App.cs"]);
+
+        var decision = RunCommandArguments.DecideContinuation(parsed, preflightFailure: new InvalidOperationException("not git"));
+
+        Assert.Equal(RunCommandExecutionRoute.Fail, decision.Route);
+        Assert.Equal("not git", decision.Error);
+    }
+
+    [Fact]
+    public void DecideContinuation_StopsAfterSuccessfulS1ExternalPreflight()
+    {
+        var parsed = RunCommandArguments.Parse(["run", "--target", "/tmp/project", "--trust-build-test", "Change src/App.cs"]);
+
+        var decision = RunCommandArguments.DecideContinuation(parsed, preflightSucceeded: true);
+
+        Assert.Equal(RunCommandExecutionRoute.StopAfterS1Preflight, decision.Route);
+    }
+
+    [Fact]
+    public void DecideContinuation_AllowsLegacySelfRepositoryRunToReachExistingContinuation()
+    {
+        var parsed = RunCommandArguments.Parse(["run", "Add a health endpoint"]);
+
+        var decision = RunCommandArguments.DecideContinuation(parsed);
+
+        Assert.Equal(RunCommandExecutionRoute.ContinueLegacy, decision.Route);
+    }
 }

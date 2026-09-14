@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace EOS.Infrastructure;
@@ -23,19 +24,10 @@ public sealed class TargetWorkspacePreflight
             throw new TargetWorkspacePreflightException("The external target path is required.");
         }
 
-        string canonicalSelectedPath;
-        try
+        var selectedPathCandidate = NormalizeSelectedPath(selectedPath);
+        if (!Directory.Exists(selectedPathCandidate))
         {
-            canonicalSelectedPath = Path.GetFullPath(selectedPath);
-        }
-        catch (Exception ex)
-        {
-            throw new TargetWorkspacePreflightException($"The external target path is invalid: {ex.Message}", ex);
-        }
-
-        if (!Directory.Exists(canonicalSelectedPath))
-        {
-            if (File.Exists(canonicalSelectedPath))
+            if (File.Exists(selectedPathCandidate))
             {
                 throw new TargetWorkspacePreflightException("The external target path must be a directory.");
             }
@@ -43,7 +35,7 @@ public sealed class TargetWorkspacePreflight
             throw new TargetWorkspacePreflightException("The external target path does not exist.");
         }
 
-        canonicalSelectedPath = new DirectoryInfo(canonicalSelectedPath).FullName;
+        var canonicalSelectedPath = ResolvePhysicalDirectory(selectedPathCandidate);
 
         var rootResult = await RunGitAsync(canonicalSelectedPath, ["rev-parse", "--show-toplevel"], cancellationToken);
         if (rootResult.ExitCode != 0)
@@ -57,7 +49,7 @@ public sealed class TargetWorkspacePreflight
             throw new TargetWorkspacePreflightException("Git returned an ambiguous working-tree root for the external target.");
         }
 
-        var canonicalRoot = new DirectoryInfo(Path.GetFullPath(rootLines[0])).FullName;
+        var canonicalRoot = ResolvePhysicalDirectory(rootLines[0]);
         if (!IsSameOrDescendant(canonicalSelectedPath, canonicalRoot))
         {
             throw new TargetWorkspacePreflightException("The external target path resolved outside its Git working-tree root.");
@@ -139,6 +131,67 @@ public sealed class TargetWorkspacePreflight
     private static string EnsureTrailingSeparator(string path) =>
         path.EndsWith(Path.DirectorySeparatorChar) ? path : path + Path.DirectorySeparatorChar;
 
+    private static string NormalizeSelectedPath(string selectedPath)
+    {
+        try
+        {
+            return Path.GetFullPath(selectedPath);
+        }
+        catch (Exception ex)
+        {
+            throw new TargetWorkspacePreflightException($"The external target path is invalid: {ex.Message}", ex);
+        }
+    }
+
+    private static string ResolvePhysicalDirectory(string path)
+    {
+        var fullPath = NormalizeSelectedPath(path);
+        if (!Directory.Exists(fullPath))
+        {
+            throw new TargetWorkspacePreflightException("The external target path does not exist.");
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return new DirectoryInfo(fullPath).FullName;
+        }
+
+        var result = RunRealpath(fullPath);
+        if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.Output))
+        {
+            throw new TargetWorkspacePreflightException($"The external target path could not be physically resolved: {result.Output}");
+        }
+
+        var lines = SplitLines(result.Output);
+        if (lines.Count != 1 || !Directory.Exists(lines[0]))
+        {
+            throw new TargetWorkspacePreflightException("The external target path resolved to an invalid physical directory.");
+        }
+
+        return new DirectoryInfo(lines[0]).FullName;
+    }
+
+    private static (int ExitCode, string Output) RunRealpath(string path)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "realpath",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("-e");
+        startInfo.ArgumentList.Add(path);
+
+        using var process = Process.Start(startInfo)
+            ?? throw new TargetWorkspacePreflightException("Could not start realpath.");
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return (process.ExitCode, Bound((stdout + stderr).Trim()));
+    }
+
     private static List<string> SplitLines(string output) =>
         output.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
@@ -159,6 +212,7 @@ public sealed class TargetWorkspacePreflight
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
+        ScrubGitRepositoryEnvironment(startInfo);
         foreach (var argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
@@ -229,6 +283,27 @@ public sealed class TargetWorkspacePreflight
             // Best effort: the preflight has already failed closed.
         }
     }
+
+    private static void ScrubGitRepositoryEnvironment(ProcessStartInfo startInfo)
+    {
+        foreach (var variable in RepositorySelectionEnvironmentVariables)
+        {
+            startInfo.Environment.Remove(variable);
+        }
+
+        startInfo.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+    }
+
+    private static readonly string[] RepositorySelectionEnvironmentVariables =
+    [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_PREFIX",
+    ];
 }
 
 public sealed record TargetWorkspacePreflightResult(
